@@ -1,10 +1,22 @@
 -- Test file for remote event hooking in Delta Executor Mobile
+-- VERSION 2.0 - WITH WEBHOOK SUPPORT
 -- This will help us debug why events aren't being captured
 
 local P = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local p = P.LocalPlayer
 local newcclosure = newcclosure or function(func) return func end
+
+-- IMMEDIATE VERSION CHECK - This prints immediately to verify version
+print("========================================")
+print("REMOTE HOOK TEST - VERSION 2.0")
+print("WEBHOOK SUPPORT ENABLED")
+print("========================================")
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "Remote Hook Test v2.0",
+    Text = "Webhook support enabled!",
+    Duration = 5
+})
 
 wait(1)
 
@@ -151,8 +163,8 @@ g.Name = "RemoteHookTest"
 g.Parent = p.PlayerGui
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 400, 0, 450)
-f.Position = UDim2.new(0.5, -200, 0.5, -225)
+f.Size = UDim2.new(0, 420, 0, 460)
+f.Position = UDim2.new(0.5, -210, 0.5, -230)
 f.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 f.BorderSizePixel = 0
 f.Parent = g
@@ -160,9 +172,9 @@ f.Parent = g
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 40)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-title.Text = "Remote Event Hook Test"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.TextSize = 18
+title.Text = "Remote Hook Test v2.0 - WEBHOOK ENABLED"
+title.TextColor3 = Color3.fromRGB(50, 255, 50)
+title.TextSize = 16
 title.Font = Enum.Font.GothamBold
 title.Parent = f
 
