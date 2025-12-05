@@ -6,7 +6,7 @@ local RS = game:GetService("ReplicatedStorage")
 local p = P.LocalPlayer
 
 print("========================================")
-print("REMOTE HOOK TEST - VERSION 5.0")
+print("REMOTE HOOK TEST - VERSION 6.0")
 print("Delta Executor Mobile Specific")
 print("========================================")
 
@@ -196,10 +196,10 @@ local remote = nil
 local original = nil
 local hooked = false
 
-hookBtn.Activated:Connect(function()
+local function findAndHookRemote()
     if hooked then
         addLog("Already hooked!")
-        return
+        return true
     end
     
     addLog("Finding remote...")
@@ -209,15 +209,33 @@ hookBtn.Activated:Connect(function()
     
     if not success or not r then
         addLog("❌ Remote not found!")
-        return
+        addLog("Searching for any RemoteEvent...")
+        
+        -- Try to find ANY remote event
+        for _, obj in pairs(RS:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                addLog("Found: " .. obj:GetFullName())
+            end
+        end
+        return false
     end
     
     remote = r
     addLog("✓ Found: " .. remote.Name)
     
-    -- Hook FireClient
-    pcall(function()
+    return hookRemote()
+end
+
+local function hookRemote()
+    if not remote then
+        addLog("❌ No remote to hook!")
+        return false
+    end
+    
+    addLog("Hooking FireClient...")
+    local hookSuccess, hookErr = pcall(function()
         original = remote.FireClient
+        addLog("✓ Saved original")
         
         remote.FireClient = newcclosure(function(self, ...)
             local args = {...}
@@ -228,52 +246,84 @@ hookBtn.Activated:Connect(function()
             status.TextColor3 = Color3.fromRGB(255, 100, 100)
             
             -- Build event string
-            local eventStr = "Event #" .. eventCount .. " @ " .. os.date("%X") .. "\n"
+            local eventStr = "==Event#" .. eventCount .. "==\n"
+            eventStr = eventStr .. "Time: " .. os.date("%X") .. "\n"
             
+            -- Process each argument
             for i, arg in ipairs(args) do
-                if type(arg) == "string" then
-                    eventStr = eventStr .. "Arg" .. i .. ": " .. arg .. "\n"
-                elseif type(arg) == "number" then
-                    eventStr = eventStr .. "Arg" .. i .. ": " .. tostring(arg) .. "\n"
-                elseif type(arg) == "table" then
-                    -- Extract table data
-                    local extracted = extractTableData(arg)
+                local argType = type(arg)
+                
+                if argType == "Instance" and arg:IsA("Player") then
+                    eventStr = eventStr .. "Player: " .. arg.Name .. "\n"
+                elseif argType == "string" then
+                    eventStr = eventStr .. "EventName: " .. arg .. "\n"
+                elseif argType == "number" then
+                    eventStr = eventStr .. "Number: " .. tostring(arg) .. "\n"
+                elseif argType == "table" then
+                    -- Try direct property access first
+                    local eggName = arg.Name
+                    local pets = arg.Pets
+                    local speed = arg.Speed
                     
-                    -- Check for Pets
-                    if arg.Pets or extracted.Pets then
-                        local pets = arg.Pets or extracted.Pets
-                        if type(pets) == "table" then
-                            for pi = 1, 10 do
-                                local pet = pets[pi]
-                                if pet and type(pet) == "table" then
-                                    local petObj = pet.Pet
-                                    if petObj and type(petObj) == "table" then
-                                        local name = petObj.Name or rawget(petObj, "Name")
-                                        if name then
-                                            eventStr = eventStr .. "Pet" .. pi .. ": " .. tostring(name) .. "\n"
-                                        end
-                                    end
-                                end
-                            end
-                        end
+                    if eggName then
+                        eventStr = eventStr .. "Egg: " .. tostring(eggName) .. "\n"
                     end
                     
-                    -- Show egg name
-                    if arg.Name then
-                        eventStr = eventStr .. "Egg: " .. tostring(arg.Name) .. "\n"
+                    if speed then
+                        eventStr = eventStr .. "Speed: " .. tostring(speed) .. "\n"
+                    end
+                    
+                    -- Access Pets array
+                    if pets and type(pets) == "table" then
+                        eventStr = eventStr .. "Pets:\n"
+                        
+                        -- Try numeric indices
+                        for petIndex = 1, 20 do
+                            local petData = pets[petIndex]
+                            if petData then
+                                if type(petData) == "table" then
+                                    local pet = petData.Pet
+                                    if pet and type(pet) == "table" then
+                                        local petName = pet.Name
+                                        local shiny = pet.Shiny
+                                        local mythic = pet.Mythic
+                                        
+                                        if petName then
+                                            eventStr = eventStr .. "  [" .. petIndex .. "] " .. tostring(petName)
+                                            if shiny then eventStr = eventStr .. " ✨" end
+                                            if mythic then eventStr = eventStr .. " 💎" end
+                                            eventStr = eventStr .. "\n"
+                                        else
+                                            eventStr = eventStr .. "  [" .. petIndex .. "] (no name)\n"
+                                        end
+                                    else
+                                        eventStr = eventStr .. "  [" .. petIndex .. "] Pet type: " .. type(pet) .. "\n"
+                                    end
+                                else
+                                    eventStr = eventStr .. "  [" .. petIndex .. "] Data type: " .. type(petData) .. "\n"
+                                end
+                            else
+                                break
+                            end
+                        end
+                    else
+                        eventStr = eventStr .. "Pets: " .. tostring(pets) .. "\n"
                     end
                 end
             end
             
-            eventStr = eventStr .. "---\n"
+            eventStr = eventStr .. "\n"
             
-            -- Store in StringValue
+            -- Store immediately
             storedEvents = storedEvents .. eventStr
             storage.Value = storedEvents
             
             -- Update UI
-            addLog("Event #" .. eventCount)
-            status.Text = "Events: " .. eventCount .. " | Stored: " .. #storedEvents .. " chars"
+            addLog("Captured #" .. eventCount)
+            
+            -- Update status after a brief delay to show visual feedback
+            task.wait(0.1)
+            status.Text = "Events: " .. eventCount .. " | Chars: " .. #storedEvents
             status.TextColor3 = Color3.fromRGB(100, 255, 100)
             
             -- Call original
@@ -281,10 +331,21 @@ hookBtn.Activated:Connect(function()
         end)
         
         hooked = true
-        addLog("✓ HOOKED!")
+        addLog("✓ HOOKED FireClient!")
         hookBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
         hookBtn.Text = "✓ Hooked"
     end)
+    
+    if not hookSuccess then
+        addLog("❌ Hook failed: " .. tostring(hookErr))
+        return false
+    end
+    
+    return true
+end
+
+hookBtn.Activated:Connect(function()
+    findAndHookRemote()
 end)
 
 -- Test webhook
@@ -357,4 +418,20 @@ end)
 
 addLog("Ready! Click 'Hook Remote'")
 addLog("Then hatch eggs to test")
+
+-- Auto-hook after 2 seconds
+task.wait(2)
+addLog("Auto-hooking in 1 second...")
+task.wait(1)
+findAndHookRemote()
+
+-- Keep trying to hook if not successful
+spawn(function()
+    while not hooked do
+        task.wait(3)
+        if not hooked then
+            findAndHookRemote()
+        end
+    end
+end)
 
