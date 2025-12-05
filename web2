@@ -1,5 +1,5 @@
--- VERSION 5.0 - DELTA EXECUTOR MOBILE SPECIFIC APPROACH
--- Completely different storage and table access methods
+-- VERSION 6.0 - ONCLIENTEVENT APPROACH WITH PROPER STORAGE
+-- Back to OnClientEvent but with fixed storage and table access
 
 local P = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -7,12 +7,12 @@ local p = P.LocalPlayer
 
 print("========================================")
 print("REMOTE HOOK TEST - VERSION 6.0")
-print("Delta Executor Mobile Specific")
+print("OnClientEvent + Fixed Storage")
 print("========================================")
 
 game:GetService("StarterGui"):SetCore("SendNotification", {
-    Title = "Remote Hook Test v5.0",
-    Text = "Delta Mobile specific!",
+    Title = "Remote Hook Test v6.0",
+    Text = "OnClientEvent approach!",
     Duration = 5
 })
 
@@ -72,7 +72,7 @@ f.Parent = g
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 35)
 title.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
-title.Text = "v5.0 - Delta Mobile"
+title.Text = "v6.0 - OnClientEvent"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.GothamBold
@@ -232,12 +232,9 @@ local function hookRemote()
         return false
     end
     
-    addLog("Hooking FireClient...")
+    addLog("Connecting OnClientEvent...")
     local hookSuccess, hookErr = pcall(function()
-        original = remote.FireClient
-        addLog("✓ Saved original")
-        
-        remote.FireClient = newcclosure(function(self, ...)
+        remote.OnClientEvent:Connect(function(...)
             local args = {...}
             eventCount = eventCount + 1
             
@@ -248,96 +245,103 @@ local function hookRemote()
             -- Build event string
             local eventStr = "==Event#" .. eventCount .. "==\n"
             eventStr = eventStr .. "Time: " .. os.date("%X") .. "\n"
+            eventStr = eventStr .. "Args: " .. #args .. "\n"
             
             -- Process each argument
             for i, arg in ipairs(args) do
                 local argType = type(arg)
                 
-                if argType == "Instance" and arg:IsA("Player") then
-                    eventStr = eventStr .. "Player: " .. arg.Name .. "\n"
-                elseif argType == "string" then
+                if argType == "string" then
                     eventStr = eventStr .. "EventName: " .. arg .. "\n"
+                    addLog("Event: " .. arg)
                 elseif argType == "number" then
                     eventStr = eventStr .. "Number: " .. tostring(arg) .. "\n"
+                    addLog("Number: " .. arg)
                 elseif argType == "table" then
-                    -- Try direct property access first
+                    -- Show basic table info
+                    local keyCount = 0
+                    local keys = {}
+                    for k in pairs(arg) do
+                        keyCount = keyCount + 1
+                        table.insert(keys, tostring(k))
+                    end
+                    eventStr = eventStr .. "Table keys (" .. keyCount .. "): " .. table.concat(keys, ", ") .. "\n"
+                    
+                    -- Try direct property access
                     local eggName = arg.Name
                     local pets = arg.Pets
                     local speed = arg.Speed
                     
                     if eggName then
                         eventStr = eventStr .. "Egg: " .. tostring(eggName) .. "\n"
+                        addLog("Egg: " .. eggName)
                     end
                     
                     if speed then
                         eventStr = eventStr .. "Speed: " .. tostring(speed) .. "\n"
                     end
                     
-                    -- Access Pets array
-                    if pets and type(pets) == "table" then
-                        eventStr = eventStr .. "Pets:\n"
+                    -- Access Pets array - try multiple methods
+                    if pets then
+                        local petsType = type(pets)
+                        eventStr = eventStr .. "Pets type: " .. petsType .. "\n"
                         
-                        -- Try numeric indices
-                        for petIndex = 1, 20 do
-                            local petData = pets[petIndex]
-                            if petData then
-                                if type(petData) == "table" then
+                        if petsType == "table" then
+                            -- Count pets
+                            local petCount = 0
+                            for _ in pairs(pets) do
+                                petCount = petCount + 1
+                            end
+                            eventStr = eventStr .. "Pets count: " .. petCount .. "\n"
+                            
+                            -- Try numeric indices
+                            for petIndex = 1, 20 do
+                                local petData = pets[petIndex]
+                                if petData and type(petData) == "table" then
                                     local pet = petData.Pet
                                     if pet and type(pet) == "table" then
                                         local petName = pet.Name
-                                        local shiny = pet.Shiny
-                                        local mythic = pet.Mythic
-                                        
                                         if petName then
-                                            eventStr = eventStr .. "  [" .. petIndex .. "] " .. tostring(petName)
-                                            if shiny then eventStr = eventStr .. " ✨" end
-                                            if mythic then eventStr = eventStr .. " 💎" end
+                                            eventStr = eventStr .. "  Pet" .. petIndex .. ": " .. tostring(petName)
+                                            addLog("  Pet: " .. petName)
+                                            if pet.Shiny then eventStr = eventStr .. " ✨" end
+                                            if pet.Mythic then eventStr = eventStr .. " 💎" end
                                             eventStr = eventStr .. "\n"
-                                        else
-                                            eventStr = eventStr .. "  [" .. petIndex .. "] (no name)\n"
                                         end
-                                    else
-                                        eventStr = eventStr .. "  [" .. petIndex .. "] Pet type: " .. type(pet) .. "\n"
                                     end
                                 else
-                                    eventStr = eventStr .. "  [" .. petIndex .. "] Data type: " .. type(petData) .. "\n"
+                                    break
                                 end
-                            else
-                                break
                             end
+                        else
+                            eventStr = eventStr .. "Pets: " .. tostring(pets) .. "\n"
                         end
-                    else
-                        eventStr = eventStr .. "Pets: " .. tostring(pets) .. "\n"
                     end
                 end
             end
             
             eventStr = eventStr .. "\n"
             
-            -- Store immediately
+            -- Store in StringValue
             storedEvents = storedEvents .. eventStr
             storage.Value = storedEvents
             
-            -- Update UI
-            addLog("Captured #" .. eventCount)
-            
-            -- Update status after a brief delay to show visual feedback
-            task.wait(0.1)
-            status.Text = "Events: " .. eventCount .. " | Chars: " .. #storedEvents
-            status.TextColor3 = Color3.fromRGB(100, 255, 100)
-            
-            -- Call original
-            return original(self, unpack(args))
+            -- Update status
+            task.spawn(function()
+                task.wait(0.2)
+                status.Text = "Events: " .. eventCount .. " | Chars: " .. #storedEvents
+                status.TextColor3 = Color3.fromRGB(100, 255, 100)
+            end)
         end)
         
         hooked = true
-        addLog("✓ HOOKED FireClient!")
+        addLog("✓ CONNECTED OnClientEvent!")
         hookBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-        hookBtn.Text = "✓ Hooked"
+        hookBtn.Text = "✓ Connected"
     end)
     
     if not hookSuccess then
-        addLog("❌ Hook failed: " .. tostring(hookErr))
+        addLog("❌ Connection failed: " .. tostring(hookErr))
         return false
     end
     
@@ -409,11 +413,22 @@ end)
 
 -- Close
 closeBtn.Activated:Connect(function()
-    if original and remote then
-        remote.FireClient = original
+    addLog("Closing...")
+    -- Send pending events first
+    if #storedEvents > 10 then
+        addLog("Sending final batch...")
+        local content = "**Final Batch**\n```\n" .. storedEvents .. "\n```"
+        if #content > 1900 then
+            content = string.sub(content, 1, 1900) .. "...\n```"
+        end
+        local payload = {content = content}
+        local json = jsonEncode(payload)
+        httpLib(WEBHOOK, "POST", {["Content-Type"] = "application/json"}, json)
+        task.wait(1)
     end
     g:Destroy()
     if storage then storage:Destroy() end
+    error("Closed")
 end)
 
 addLog("Ready! Click 'Hook Remote'")
