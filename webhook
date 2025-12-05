@@ -104,6 +104,19 @@ local function detectHttpLib()
     
     if request then
         addLog("✓ request found")
+        addLog("request type: " .. type(request))
+        if type(request) == "function" then
+            addLog("request is a function")
+        elseif type(request) == "table" then
+            addLog("request is a table, checking methods:")
+            for k, v in pairs(request) do
+                if type(v) == "function" then
+                    addLog("  request." .. tostring(k) .. " (function)")
+                else
+                    addLog("  request." .. tostring(k) .. " = " .. tostring(v))
+                end
+            end
+        end
     else
         addLog("✗ request NOT found")
     end
@@ -118,7 +131,23 @@ end
 -- Try different HTTP methods
 local function testWebhook(url)
     addLog("=== Testing Webhook ===")
-    addLog("URL: " .. string.sub(url, 1, 50) .. "...")
+    
+    -- Clean and validate URL
+    url = string.gsub(url, "^%s*(.-)%s*$", "%1")  -- Trim whitespace
+    addLog("URL: " .. string.sub(url, 1, 60) .. "...")
+    addLog("URL length: " .. #url)
+    
+    -- Check if URL is valid
+    if url == "" then
+        addLog("ERROR: Empty URL!")
+        return
+    end
+    
+    if not string.find(url, "^https?://") then
+        addLog("ERROR: URL must start with http:// or https://")
+        addLog("Current URL: " .. string.sub(url, 1, 20))
+        return
+    end
     
     local testPayload = {
         content = "Test from Delta Mobile - " .. os.date("%X")
@@ -148,6 +177,7 @@ local function testWebhook(url)
     local headers = {["Content-Type"] = "application/json"}
     
     addLog("JSON: " .. jsonBody)
+    addLog("Headers: Content-Type = application/json")
     
     -- Test 1: delta.request
     if delta and delta.request then
@@ -258,9 +288,9 @@ local function testWebhook(url)
         end
     end
     
-    -- Test 5: request
+    -- Test 5: request (try multiple formats)
     if request then
-        addLog("\n--- Testing request ---")
+        addLog("\n--- Testing request (lowercase) ---")
         local success, result = pcall(function()
             return request({
                 url = url,
@@ -286,6 +316,73 @@ local function testWebhook(url)
             end
         else
             addLog("✗ request failed: " .. tostring(result))
+        end
+        
+        -- Try uppercase format
+        addLog("\n--- Testing request (uppercase) ---")
+        local success2, result2 = pcall(function()
+            return request({
+                Url = url,
+                Method = "POST",
+                Headers = headers,
+                Body = jsonBody
+            })
+        end)
+        
+        if success2 then
+            addLog("✓ request (uppercase) call succeeded")
+            if result2 then
+                addLog("Result type: " .. type(result2))
+                if type(result2) == "table" then
+                    for k, v in pairs(result2) do
+                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
+                    end
+                else
+                    addLog("Result: " .. tostring(result2))
+                end
+            else
+                addLog("✗ request (uppercase) returned nil")
+            end
+        else
+            addLog("✗ request (uppercase) failed: " .. tostring(result2))
+        end
+        
+        -- Try direct function call format
+        addLog("\n--- Testing request.post (if exists) ---")
+        if request.post then
+            local success3, result3 = pcall(function()
+                return request.post(url, jsonBody, headers)
+            end)
+            
+            if success3 then
+                addLog("✓ request.post call succeeded")
+                addLog("Result: " .. tostring(result3))
+            else
+                addLog("✗ request.post failed: " .. tostring(result3))
+            end
+        else
+            addLog("request.post not available")
+        end
+        
+        -- Try with just url and body
+        addLog("\n--- Testing request (url + body only) ---")
+        local success4, result4 = pcall(function()
+            return request(url, jsonBody)
+        end)
+        
+        if success4 then
+            addLog("✓ request(url, body) call succeeded")
+            addLog("Result: " .. tostring(result4))
+        else
+            addLog("✗ request(url, body) failed: " .. tostring(result4))
+        end
+        
+        -- Validate URL format
+        addLog("\n--- URL Validation ---")
+        addLog("URL length: " .. #url)
+        addLog("Starts with http: " .. tostring(string.find(url, "^https?://") ~= nil))
+        if string.find(url, "^https?://") == nil then
+            addLog("⚠ WARNING: URL doesn't start with http:// or https://")
         end
     end
     
