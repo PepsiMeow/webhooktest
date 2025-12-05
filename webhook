@@ -8,6 +8,125 @@ local newcclosure = newcclosure or function(func) return func end
 
 wait(1)
 
+-- Webhook setup
+local WEBHOOK = "https://discord.com/api/webhooks/1227328649322168391/2SdD38qqsMjyktorFtdOLO7p9yN_RK_VdVocfiuT-SxRVKX1t5dMEw3STYxfSWCz7IeQ"
+local BATCH_SIZE = 10
+local pendingEvents = {}
+
+-- HTTP library detection (same as main script)
+local httpLib = nil
+local httpLibName = ""
+if delta and delta.request then
+    httpLib = function(url, method, headers, body)
+        local success, res, err = pcall(function()
+            return delta.request({Url = url, Method = method, Headers = headers or {}, Body = body})
+        end)
+        if success and res then
+            local status = res.StatusCode or (res.Success and 200 or 0)
+            local body = res.Body or ""
+            local ok = res.Success or status == 200 or status == 204
+            return ok, body, status
+        end
+        return false, err or "Request exception", 0
+    end
+    httpLibName = "delta.request"
+elseif request then
+    httpLib = function(url, method, headers, body)
+        local success, res, err = pcall(function()
+            return request({Url = url, Method = method, Headers = headers or {}, Body = body})
+        end)
+        if success and res then
+            local status = res.StatusCode or (res.Success and 200 or (res.success and 200 or 0))
+            local body = res.Body or res.body or ""
+            local ok = res.Success or res.success or status == 200 or status == 204
+            return ok, body, status
+        end
+        return false, err or "Request exception", 0
+    end
+    httpLibName = "request"
+end
+
+-- JSON encoder
+local function jsonEncode(value, depth)
+    depth = depth or 0
+    if depth > 10 then return '"max_depth"' end
+    local vType = type(value)
+    if vType == "string" then
+        local escaped = string.gsub(value, "\\", "\\\\")
+        escaped = string.gsub(escaped, "\"", "\\\"")
+        escaped = string.gsub(escaped, "\n", "\\n")
+        escaped = string.gsub(escaped, "\r", "\\r")
+        escaped = string.gsub(escaped, "\t", "\\t")
+        return string.format("%q", escaped)
+    elseif vType == "number" then
+        return tostring(value)
+    elseif vType == "boolean" then
+        return value and "true" or "false"
+    elseif vType == "nil" then
+        return "null"
+    elseif vType == "table" then
+        local isArray = true
+        local maxIndex = 0
+        for k in pairs(value) do
+            if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+                isArray = false
+                break
+            end
+            if k > maxIndex then maxIndex = k end
+        end
+        if isArray and maxIndex > 0 then
+            local parts = {}
+            for i = 1, maxIndex do
+                table.insert(parts, jsonEncode(value[i], depth + 1))
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        else
+            local parts = {}
+            for k, v in pairs(value) do
+                local keyStr = type(k) == "string" and string.format("%q", k) or "[" .. tostring(k) .. "]"
+                table.insert(parts, keyStr .. ":" .. jsonEncode(v, depth + 1))
+            end
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+    else
+        return string.format("%q", tostring(value))
+    end
+end
+
+-- Send batched events to webhook
+local function sendBatchWebhook(events)
+    if not httpLib then
+        addLog("ERROR: HTTP library not available!")
+        return
+    end
+    if #events == 0 then return end
+    
+    spawn(function()
+        local content = "**=== EVENT BATCH ===**\n"
+        content = content .. "Total Events: " .. #events .. "\n"
+        content = content .. "Time: " .. os.date("%Y-%m-%d %X") .. "\n\n"
+        
+        for i, event in ipairs(events) do
+            content = content .. "**Event #" .. i .. "** (" .. event.time .. ")\n"
+            content = content .. "```\n"
+            content = content .. event.data
+            content = content .. "\n```\n\n"
+        end
+        
+        local payload = {["content"] = content}
+        local jsonPayload = jsonEncode(payload)
+        local headers = {["Content-Type"] = "application/json"}
+        
+        local success, response, status = httpLib(WEBHOOK, "POST", headers, jsonPayload)
+        
+        if success and (status == 200 or status == 204) then
+            addLog("✓ Sent batch of " .. #events .. " events to Discord")
+        else
+            addLog("✗ Webhook failed: " .. tostring(status or "error"))
+        end
+    end)
+end
+
 -- Create a simple GUI for testing
 local g = Instance.new("ScreenGui")
 g.Name = "RemoteHookTest"
@@ -213,19 +332,29 @@ local function hookFireClient()
             
             eventStr = eventStr .. "=== END EVENT ===\n"
             
-            -- Print to console (for easy copying)
-            print(eventStr)
+            -- Store event for batching
+            table.insert(pendingEvents, {
+                time = os.date("%X"),
+                data = eventStr
+            })
             
-            -- Also add to log display (truncated)
+            -- Add to log display (truncated)
             local logLines = {}
             for line in string.gmatch(eventStr, "([^\n]+)") do
                 table.insert(logLines, line)
             end
-            for i = 1, math.min(20, #logLines) do
+            for i = 1, math.min(10, #logLines) do
                 addLog(logLines[i])
             end
-            if #logLines > 20 then
-                addLog("... (see console output for full details)")
+            if #logLines > 10 then
+                addLog("... (full event stored for webhook)")
+            end
+            
+            -- Send batch if we have enough events
+            if #pendingEvents >= BATCH_SIZE then
+                addLog("\n=== Sending batch to Discord ===")
+                sendBatchWebhook(pendingEvents)
+                pendingEvents = {}
             end
             
             -- Call original
@@ -325,6 +454,17 @@ testBtn.TextSize = 12
 testBtn.Font = Enum.Font.Gotham
 testBtn.Parent = f
 
+local sendBatchBtn = Instance.new("TextButton")
+sendBatchBtn.Size = UDim2.new(0, 120, 0, 35)
+sendBatchBtn.Position = UDim2.new(0.5, -60, 0, 380)
+sendBatchBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+sendBatchBtn.BorderSizePixel = 0
+sendBatchBtn.Text = "Send Batch Now"
+sendBatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+sendBatchBtn.TextSize = 11
+sendBatchBtn.Font = Enum.Font.Gotham
+sendBatchBtn.Parent = f
+
 findBtn.Activated:Connect(function()
     findRemote()
 end)
@@ -337,7 +477,19 @@ testBtn.Activated:Connect(function()
     testOnClientEvent()
 end)
 
+sendBatchBtn.Activated:Connect(function()
+    if #pendingEvents > 0 then
+        addLog("\n=== Manually sending batch ===")
+        sendBatchWebhook(pendingEvents)
+        addLog("Sent " .. #pendingEvents .. " events")
+        pendingEvents = {}
+    else
+        addLog("No events to send!")
+    end
+end)
+
 -- Auto-find on load
 task.wait(1)
+addLog("HTTP Library: " .. (httpLibName ~= "" and httpLibName or "NOT FOUND"))
 findRemote()
 
