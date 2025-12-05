@@ -265,11 +265,14 @@ local function hookFireClient()
             eventStr = eventStr .. "Time: " .. os.date("%X") .. "\n"
             eventStr = eventStr .. "Args count: " .. #args .. "\n\n"
             
-            local function serializeValue(v, depth, maxDepth)
+            local function serializeValue(v, depth, maxDepth, indent)
                 depth = depth or 0
-                maxDepth = maxDepth or 3
+                maxDepth = maxDepth or 5
+                indent = indent or ""
+                local nextIndent = indent .. "  "
+                
                 if depth > maxDepth then
-                    return "[Max Depth]"
+                    return "[Max Depth Reached]"
                 end
                 
                 local vType = type(v)
@@ -280,31 +283,66 @@ local function hookFireClient()
                 elseif vType == "nil" then
                     return "nil"
                 elseif vType == "table" then
+                    -- Check if table is empty
+                    local hasItems = false
+                    for _ in pairs(v) do
+                        hasItems = true
+                        break
+                    end
+                    if not hasItems then
+                        return "{}"
+                    end
+                    
                     local parts = {"{"}
                     local isArray = true
                     local maxIndex = 0
+                    local keyCount = 0
+                    
+                    -- First pass: check if it's an array and count keys
                     for k in pairs(v) do
+                        keyCount = keyCount + 1
                         if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
                             isArray = false
-                            break
                         end
-                        if k > maxIndex then maxIndex = k end
+                        if type(k) == "number" and k > maxIndex then
+                            maxIndex = k
+                        end
                     end
                     
                     if isArray and maxIndex > 0 then
-                        for i = 1, maxIndex do
-                            table.insert(parts, serializeValue(v[i], depth + 1, maxDepth))
+                        -- Array format
+                        for i = 1, math.min(maxIndex, 50) do
+                            if v[i] ~= nil then
+                                table.insert(parts, nextIndent .. "[" .. i .. "] = " .. serializeValue(v[i], depth + 1, maxDepth, nextIndent))
+                            end
+                        end
+                        if maxIndex > 50 then
+                            table.insert(parts, nextIndent .. "... (" .. (maxIndex - 50) .. " more items)")
                         end
                     else
+                        -- Dictionary format - show all keys
+                        local shown = 0
                         for k, val in pairs(v) do
-                            local keyStr = type(k) == "string" and string.format("[%q]", k) or "[" .. tostring(k) .. "]"
-                            table.insert(parts, keyStr .. " = " .. serializeValue(val, depth + 1, maxDepth))
+                            shown = shown + 1
+                            if shown <= 100 then
+                                local keyStr
+                                if type(k) == "string" then
+                                    keyStr = "[" .. string.format("%q", k) .. "]"
+                                else
+                                    keyStr = "[" .. tostring(k) .. "]"
+                                end
+                                local valStr = serializeValue(val, depth + 1, maxDepth, nextIndent)
+                                table.insert(parts, nextIndent .. keyStr .. " = " .. valStr)
+                            end
+                        end
+                        if shown > 100 then
+                            table.insert(parts, nextIndent .. "... (" .. (shown - 100) .. " more keys)")
                         end
                     end
-                    table.insert(parts, "}")
+                    table.insert(parts, indent .. "}")
                     return table.concat(parts, "\n")
                 else
-                    return "[" .. vType .. "]"
+                    return "[" .. vType .. ": " .. tostring(v) .. "]"
                 end
             end
             
@@ -317,7 +355,31 @@ local function hookFireClient()
                 elseif argType == "number" then
                     eventStr = eventStr .. "  Value: " .. tostring(arg) .. "\n"
                 elseif argType == "table" then
-                    eventStr = eventStr .. serializeValue(arg, 0, 3) .. "\n"
+                    -- First, show basic info
+                    local keyCount = 0
+                    local arrayCount = 0
+                    for k in pairs(arg) do
+                        keyCount = keyCount + 1
+                        if type(k) == "number" then
+                            arrayCount = arrayCount + 1
+                        end
+                    end
+                    eventStr = eventStr .. "  Total keys: " .. keyCount .. " (array elements: " .. arrayCount .. ")\n"
+                    
+                    -- Show all keys first
+                    local keys = {}
+                    for k in pairs(arg) do
+                        table.insert(keys, tostring(k))
+                    end
+                    if #keys <= 20 then
+                        eventStr = eventStr .. "  Keys: " .. table.concat(keys, ", ") .. "\n"
+                    else
+                        eventStr = eventStr .. "  Keys (first 20): " .. table.concat({table.unpack(keys, 1, 20)}, ", ") .. "...\n"
+                    end
+                    
+                    -- Now serialize the full table
+                    eventStr = eventStr .. "  Full structure:\n"
+                    eventStr = eventStr .. serializeValue(arg, 0, 5, "  ") .. "\n"
                 elseif argType == "Instance" then
                     if arg:IsA("Player") then
                         eventStr = eventStr .. "  Player: " .. arg.Name .. "\n"
