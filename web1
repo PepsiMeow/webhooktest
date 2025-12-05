@@ -163,8 +163,8 @@ g.Name = "RemoteHookTest"
 g.Parent = p.PlayerGui
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 420, 0, 460)
-f.Position = UDim2.new(0.5, -210, 0.5, -230)
+f.Size = UDim2.new(0, 380, 0, 400)
+f.Position = UDim2.new(0.5, -190, 0.5, -200)
 f.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 f.BorderSizePixel = 0
 f.Parent = g
@@ -179,8 +179,8 @@ title.Font = Enum.Font.GothamBold
 title.Parent = f
 
 local logDisplay = Instance.new("TextLabel")
-logDisplay.Size = UDim2.new(0, 380, 0, 300)
-logDisplay.Position = UDim2.new(0.5, -190, 0, 50)
+logDisplay.Size = UDim2.new(0, 360, 0, 250)
+logDisplay.Position = UDim2.new(0.5, -180, 0, 50)
 logDisplay.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 logDisplay.BorderSizePixel = 0
 logDisplay.Text = "Click 'Find Remote' to start..."
@@ -407,9 +407,33 @@ local function hookFireClient()
                         eventStr = eventStr .. "  Keys (first 20): " .. table.concat({table.unpack(keys, 1, 20)}, ", ") .. "...\n"
                     end
                     
-                    -- Now serialize the full table
+                    -- Now serialize the full table - force deep serialization
                     eventStr = eventStr .. "  Full structure:\n"
-                    eventStr = eventStr .. serializeValue(arg, 0, 5, "  ") .. "\n"
+                    local serialized = serializeValue(arg, 0, 6, "  ")
+                    eventStr = eventStr .. serialized .. "\n"
+                    
+                    -- Special handling for Pets table - try to access it directly
+                    if arg.Pets then
+                        eventStr = eventStr .. "  === PETS TABLE DETAILS ===\n"
+                        if type(arg.Pets) == "table" then
+                            local petIndex = 0
+                            for k, petData in pairs(arg.Pets) do
+                                petIndex = petIndex + 1
+                                eventStr = eventStr .. "  Pet[" .. tostring(k) .. "]:\n"
+                                if type(petData) == "table" then
+                                    eventStr = eventStr .. serializeValue(petData, 0, 6, "    ") .. "\n"
+                                else
+                                    eventStr = eventStr .. "    Type: " .. type(petData) .. " = " .. tostring(petData) .. "\n"
+                                end
+                                if petIndex >= 10 then
+                                    eventStr = eventStr .. "  ... (more pets)\n"
+                                    break
+                                end
+                            end
+                        else
+                            eventStr = eventStr .. "  Pets is not a table! Type: " .. type(arg.Pets) .. "\n"
+                        end
+                    end
                 elseif argType == "Instance" then
                     if arg:IsA("Player") then
                         eventStr = eventStr .. "  Player: " .. arg.Name .. "\n"
@@ -529,52 +553,63 @@ local function testOnClientEvent()
 end
 
 local findBtn = Instance.new("TextButton")
-findBtn.Size = UDim2.new(0, 120, 0, 35)
-findBtn.Position = UDim2.new(0.5, -130, 0, 405)
+findBtn.Size = UDim2.new(0, 110, 0, 30)
+findBtn.Position = UDim2.new(0.5, -120, 0, 305)
 findBtn.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
 findBtn.BorderSizePixel = 0
 findBtn.Text = "Find Remote"
 findBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-findBtn.TextSize = 12
+findBtn.TextSize = 10
 findBtn.Font = Enum.Font.Gotham
 findBtn.Parent = f
 
 local hookBtn = Instance.new("TextButton")
-hookBtn.Size = UDim2.new(0, 120, 0, 35)
-hookBtn.Position = UDim2.new(0.5, 10, 0, 405)
+hookBtn.Size = UDim2.new(0, 110, 0, 30)
+hookBtn.Position = UDim2.new(0.5, 10, 0, 305)
 hookBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
 hookBtn.BorderSizePixel = 0
 hookBtn.Text = "Hook FireClient"
 hookBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-hookBtn.TextSize = 12
+hookBtn.TextSize = 10
 hookBtn.Font = Enum.Font.Gotham
 hookBtn.Parent = f
 
 local testBtn = Instance.new("TextButton")
-testBtn.Size = UDim2.new(0, 120, 0, 35)
-testBtn.Position = UDim2.new(0.5, -130, 0, 360)
+testBtn.Size = UDim2.new(0, 110, 0, 30)
+testBtn.Position = UDim2.new(0.5, -120, 0, 335)
 testBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 200)
 testBtn.BorderSizePixel = 0
 testBtn.Text = "Test OnClientEvent"
 testBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-testBtn.TextSize = 12
+testBtn.TextSize = 10
 testBtn.Font = Enum.Font.Gotham
 testBtn.Parent = f
 
 local sendBatchBtn = Instance.new("TextButton")
-sendBatchBtn.Size = UDim2.new(0, 120, 0, 35)
-sendBatchBtn.Position = UDim2.new(0.5, 10, 0, 360)
+sendBatchBtn.Size = UDim2.new(0, 110, 0, 30)
+sendBatchBtn.Position = UDim2.new(0.5, 10, 0, 335)
 sendBatchBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
 sendBatchBtn.BorderSizePixel = 0
 sendBatchBtn.Text = "Send Batch Now"
 sendBatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-sendBatchBtn.TextSize = 11
+sendBatchBtn.TextSize = 10
 sendBatchBtn.Font = Enum.Font.Gotham
 sendBatchBtn.Parent = f
 
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 110, 0, 30)
+closeBtn.Position = UDim2.new(0.5, -55, 0, 370)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "Close/Stop"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 11
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Parent = f
+
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(0, 380, 0, 20)
-statusLabel.Position = UDim2.new(0.5, -190, 0, 405)
+statusLabel.Size = UDim2.new(0, 360, 0, 20)
+statusLabel.Position = UDim2.new(0.5, -180, 0, 310)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = "Events: 0 | Pending: 0"
 statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -596,14 +631,49 @@ testBtn.Activated:Connect(function()
 end)
 
 sendBatchBtn.Activated:Connect(function()
-    if #pendingEvents > 0 then
-        addLog("\n=== Manually sending batch ===")
-        sendBatchWebhook(pendingEvents)
-        addLog("Sent " .. #pendingEvents .. " events")
-        pendingEvents = {}
-    else
-        addLog("No events to send!")
+    addLog("\n=== Manual Send Batch ===")
+    addLog("Checking pendingEvents...")
+    addLog("pendingEvents type: " .. type(pendingEvents))
+    addLog("pendingEvents count: " .. #pendingEvents)
+    
+    -- Make sure we're using the global pendingEvents
+    local eventsToSend = {}
+    for i = 1, #pendingEvents do
+        table.insert(eventsToSend, pendingEvents[i])
     end
+    
+    if #eventsToSend > 0 then
+        addLog("Sending " .. #eventsToSend .. " events to webhook...")
+        sendBatchWebhook(eventsToSend)
+        pendingEvents = {}
+        if statusLabel then
+            statusLabel.Text = "Events: " .. hookCount .. " | Pending: 0/" .. BATCH_SIZE .. " (Sent!)"
+        end
+    else
+        addLog("ERROR: No events found in pendingEvents!")
+        addLog("Hook count: " .. hookCount)
+    end
+end)
+
+closeBtn.Activated:Connect(function()
+    addLog("Closing script...")
+    -- Unhook if hooked
+    if originalFireClient and remoteEvent then
+        remoteEvent.FireClient = originalFireClient
+        addLog("Unhooked FireClient")
+    end
+    -- Send any pending events before closing
+    if #pendingEvents > 0 then
+        addLog("Sending final batch before close...")
+        sendBatchWebhook(pendingEvents)
+    end
+    -- Close GUI
+    g:Destroy()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Remote Hook Test",
+        Text = "Script closed",
+        Duration = 3
+    })
 end)
 
 -- Auto-find on load
