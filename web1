@@ -95,13 +95,20 @@ end
 
 -- Send batched events to webhook
 local function sendBatchWebhook(events)
+    addLog("sendBatchWebhook called with " .. #events .. " events")
+    
     if not httpLib then
         addLog("ERROR: HTTP library not available!")
+        addLog("HTTP Lib Name: " .. (httpLibName ~= "" and httpLibName or "NOT FOUND"))
         return
     end
-    if #events == 0 then return end
+    if #events == 0 then
+        addLog("ERROR: No events to send!")
+        return
+    end
     
     spawn(function()
+        addLog("Preparing webhook payload...")
         local content = "**=== EVENT BATCH ===**\n"
         content = content .. "Total Events: " .. #events .. "\n"
         content = content .. "Time: " .. os.date("%Y-%m-%d %X") .. "\n\n"
@@ -114,15 +121,26 @@ local function sendBatchWebhook(events)
         end
         
         local payload = {["content"] = content}
+        addLog("Encoding JSON...")
         local jsonPayload = jsonEncode(payload)
         local headers = {["Content-Type"] = "application/json"}
         
+        addLog("Sending to webhook: " .. string.sub(WEBHOOK, 1, 50) .. "...")
         local success, response, status = httpLib(WEBHOOK, "POST", headers, jsonPayload)
         
         if success and (status == 200 or status == 204) then
-            addLog("✓ Sent batch of " .. #events .. " events to Discord")
+            addLog("✓ Sent batch of " .. #events .. " events to Discord (Status: " .. tostring(status) .. ")")
+            if statusLabel then
+                statusLabel.Text = "Events: " .. hookCount .. " | Pending: 0/" .. BATCH_SIZE .. " (Sent!)"
+            end
         else
-            addLog("✗ Webhook failed: " .. tostring(status or "error"))
+            addLog("✗ Webhook failed!")
+            addLog("  Success: " .. tostring(success))
+            addLog("  Status: " .. tostring(status))
+            addLog("  Response: " .. tostring(response or "nil"))
+            if statusLabel then
+                statusLabel.Text = "Events: " .. hookCount .. " | Pending: 0/" .. BATCH_SIZE .. " (FAILED!)"
+            end
         end
     end)
 end
@@ -133,8 +151,8 @@ g.Name = "RemoteHookTest"
 g.Parent = p.PlayerGui
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 400, 0, 400)
-f.Position = UDim2.new(0.5, -200, 0.5, -200)
+f.Size = UDim2.new(0, 400, 0, 450)
+f.Position = UDim2.new(0.5, -200, 0.5, -225)
 f.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 f.BorderSizePixel = 0
 f.Parent = g
@@ -149,7 +167,7 @@ title.Font = Enum.Font.GothamBold
 title.Parent = f
 
 local logDisplay = Instance.new("TextLabel")
-logDisplay.Size = UDim2.new(0, 380, 0, 320)
+logDisplay.Size = UDim2.new(0, 380, 0, 300)
 logDisplay.Position = UDim2.new(0.5, -190, 0, 50)
 logDisplay.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 logDisplay.BorderSizePixel = 0
@@ -400,6 +418,11 @@ local function hookFireClient()
                 data = eventStr
             })
             
+            -- Update status
+            if statusLabel then
+                statusLabel.Text = "Events: " .. hookCount .. " | Pending: " .. #pendingEvents .. "/" .. BATCH_SIZE
+            end
+            
             -- Add to log display (truncated)
             local logLines = {}
             for line in string.gmatch(eventStr, "([^\n]+)") do
@@ -412,11 +435,21 @@ local function hookFireClient()
                 addLog("... (full event stored for webhook)")
             end
             
+            addLog("Pending events: " .. #pendingEvents .. "/" .. BATCH_SIZE)
+            
             -- Send batch if we have enough events
             if #pendingEvents >= BATCH_SIZE then
                 addLog("\n=== Sending batch to Discord ===")
-                sendBatchWebhook(pendingEvents)
+                addLog("Batch size: " .. #pendingEvents)
+                local batchToSend = {}
+                for i = 1, #pendingEvents do
+                    table.insert(batchToSend, pendingEvents[i])
+                end
                 pendingEvents = {}
+                sendBatchWebhook(batchToSend)
+                if statusLabel then
+                    statusLabel.Text = "Events: " .. hookCount .. " | Pending: 0/" .. BATCH_SIZE .. " (Sending...)"
+                end
             end
             
             -- Call original
@@ -485,7 +518,7 @@ end
 
 local findBtn = Instance.new("TextButton")
 findBtn.Size = UDim2.new(0, 120, 0, 35)
-findBtn.Position = UDim2.new(0.5, -130, 0, 380)
+findBtn.Position = UDim2.new(0.5, -130, 0, 405)
 findBtn.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
 findBtn.BorderSizePixel = 0
 findBtn.Text = "Find Remote"
@@ -496,7 +529,7 @@ findBtn.Parent = f
 
 local hookBtn = Instance.new("TextButton")
 hookBtn.Size = UDim2.new(0, 120, 0, 35)
-hookBtn.Position = UDim2.new(0.5, 10, 0, 380)
+hookBtn.Position = UDim2.new(0.5, 10, 0, 405)
 hookBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
 hookBtn.BorderSizePixel = 0
 hookBtn.Text = "Hook FireClient"
@@ -507,7 +540,7 @@ hookBtn.Parent = f
 
 local testBtn = Instance.new("TextButton")
 testBtn.Size = UDim2.new(0, 120, 0, 35)
-testBtn.Position = UDim2.new(0.5, -60, 0, 340)
+testBtn.Position = UDim2.new(0.5, -130, 0, 360)
 testBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 200)
 testBtn.BorderSizePixel = 0
 testBtn.Text = "Test OnClientEvent"
@@ -518,7 +551,7 @@ testBtn.Parent = f
 
 local sendBatchBtn = Instance.new("TextButton")
 sendBatchBtn.Size = UDim2.new(0, 120, 0, 35)
-sendBatchBtn.Position = UDim2.new(0.5, -60, 0, 380)
+sendBatchBtn.Position = UDim2.new(0.5, 10, 0, 360)
 sendBatchBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
 sendBatchBtn.BorderSizePixel = 0
 sendBatchBtn.Text = "Send Batch Now"
@@ -526,6 +559,17 @@ sendBatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 sendBatchBtn.TextSize = 11
 sendBatchBtn.Font = Enum.Font.Gotham
 sendBatchBtn.Parent = f
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0, 380, 0, 20)
+statusLabel.Position = UDim2.new(0.5, -190, 0, 405)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Events: 0 | Pending: 0"
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+statusLabel.TextSize = 10
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = f
 
 findBtn.Activated:Connect(function()
     findRemote()
