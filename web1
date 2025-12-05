@@ -1,0 +1,557 @@
+-- Test file for remote event hooking in Delta Executor Mobile
+-- This will help us debug why events aren't being captured
+
+local P = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local p = P.LocalPlayer
+local newcclosure = newcclosure or function(func) return func end
+
+wait(1)
+
+-- Webhook setup
+local WEBHOOK = "https://discord.com/api/webhooks/1227328649322168391/2SdD38qqsMjyktorFtdOLO7p9yN_RK_VdVocfiuT-SxRVKX1t5dMEw3STYxfSWCz7IeQ"
+local BATCH_SIZE = 10
+local pendingEvents = {}
+
+-- HTTP library detection (same as main script)
+local httpLib = nil
+local httpLibName = ""
+if delta and delta.request then
+    httpLib = function(url, method, headers, body)
+        local success, res, err = pcall(function()
+            return delta.request({Url = url, Method = method, Headers = headers or {}, Body = body})
+        end)
+        if success and res then
+            local status = res.StatusCode or (res.Success and 200 or 0)
+            local body = res.Body or ""
+            local ok = res.Success or status == 200 or status == 204
+            return ok, body, status
+        end
+        return false, err or "Request exception", 0
+    end
+    httpLibName = "delta.request"
+elseif request then
+    httpLib = function(url, method, headers, body)
+        local success, res, err = pcall(function()
+            return request({Url = url, Method = method, Headers = headers or {}, Body = body})
+        end)
+        if success and res then
+            local status = res.StatusCode or (res.Success and 200 or (res.success and 200 or 0))
+            local body = res.Body or res.body or ""
+            local ok = res.Success or res.success or status == 200 or status == 204
+            return ok, body, status
+        end
+        return false, err or "Request exception", 0
+    end
+    httpLibName = "request"
+end
+
+-- JSON encoder
+local function jsonEncode(value, depth)
+    depth = depth or 0
+    if depth > 10 then return '"max_depth"' end
+    local vType = type(value)
+    if vType == "string" then
+        local escaped = string.gsub(value, "\\", "\\\\")
+        escaped = string.gsub(escaped, "\"", "\\\"")
+        escaped = string.gsub(escaped, "\n", "\\n")
+        escaped = string.gsub(escaped, "\r", "\\r")
+        escaped = string.gsub(escaped, "\t", "\\t")
+        return string.format("%q", escaped)
+    elseif vType == "number" then
+        return tostring(value)
+    elseif vType == "boolean" then
+        return value and "true" or "false"
+    elseif vType == "nil" then
+        return "null"
+    elseif vType == "table" then
+        local isArray = true
+        local maxIndex = 0
+        for k in pairs(value) do
+            if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+                isArray = false
+                break
+            end
+            if k > maxIndex then maxIndex = k end
+        end
+        if isArray and maxIndex > 0 then
+            local parts = {}
+            for i = 1, maxIndex do
+                table.insert(parts, jsonEncode(value[i], depth + 1))
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        else
+            local parts = {}
+            for k, v in pairs(value) do
+                local keyStr = type(k) == "string" and string.format("%q", k) or "[" .. tostring(k) .. "]"
+                table.insert(parts, keyStr .. ":" .. jsonEncode(v, depth + 1))
+            end
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+    else
+        return string.format("%q", tostring(value))
+    end
+end
+
+-- Send batched events to webhook
+local function sendBatchWebhook(events)
+    if not httpLib then
+        addLog("ERROR: HTTP library not available!")
+        return
+    end
+    if #events == 0 then return end
+    
+    spawn(function()
+        local content = "**=== EVENT BATCH ===**\n"
+        content = content .. "Total Events: " .. #events .. "\n"
+        content = content .. "Time: " .. os.date("%Y-%m-%d %X") .. "\n\n"
+        
+        for i, event in ipairs(events) do
+            content = content .. "**Event #" .. i .. "** (" .. event.time .. ")\n"
+            content = content .. "```\n"
+            content = content .. event.data
+            content = content .. "\n```\n\n"
+        end
+        
+        local payload = {["content"] = content}
+        local jsonPayload = jsonEncode(payload)
+        local headers = {["Content-Type"] = "application/json"}
+        
+        local success, response, status = httpLib(WEBHOOK, "POST", headers, jsonPayload)
+        
+        if success and (status == 200 or status == 204) then
+            addLog("✓ Sent batch of " .. #events .. " events to Discord")
+        else
+            addLog("✗ Webhook failed: " .. tostring(status or "error"))
+        end
+    end)
+end
+
+-- Create a simple GUI for testing
+local g = Instance.new("ScreenGui")
+g.Name = "RemoteHookTest"
+g.Parent = p.PlayerGui
+
+local f = Instance.new("Frame")
+f.Size = UDim2.new(0, 400, 0, 400)
+f.Position = UDim2.new(0.5, -200, 0.5, -200)
+f.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+f.BorderSizePixel = 0
+f.Parent = g
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 40)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+title.Text = "Remote Event Hook Test"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 18
+title.Font = Enum.Font.GothamBold
+title.Parent = f
+
+local logDisplay = Instance.new("TextLabel")
+logDisplay.Size = UDim2.new(0, 380, 0, 320)
+logDisplay.Position = UDim2.new(0.5, -190, 0, 50)
+logDisplay.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+logDisplay.BorderSizePixel = 0
+logDisplay.Text = "Click 'Find Remote' to start..."
+logDisplay.TextColor3 = Color3.fromRGB(150, 200, 255)
+logDisplay.TextSize = 10
+logDisplay.Font = Enum.Font.Gotham
+logDisplay.TextWrapped = true
+logDisplay.TextXAlignment = Enum.TextXAlignment.Left
+logDisplay.TextYAlignment = Enum.TextYAlignment.Top
+logDisplay.Parent = f
+
+local function addLog(text)
+    local current = logDisplay.Text or ""
+    local lines = {}
+    for line in string.gmatch(current, "([^\n]+)") do
+        table.insert(lines, line)
+    end
+    table.insert(lines, text)
+    while #lines > 20 do
+        table.remove(lines, 1)
+    end
+    logDisplay.Text = table.concat(lines, "\n")
+end
+
+local remoteEvent = nil
+local originalFireClient = nil
+local hookCount = 0
+
+local function findRemote()
+    addLog("=== Finding Remote Event ===")
+    
+    local success, remote = pcall(function()
+        return RS:FindFirstChild("Shared") 
+            and RS.Shared:FindFirstChild("Framework") 
+            and RS.Shared.Framework:FindFirstChild("Network") 
+            and RS.Shared.Framework.Network:FindFirstChild("Remote") 
+            and RS.Shared.Framework.Network.Remote:FindFirstChild("RemoteEvent")
+    end)
+    
+    if success and remote then
+        remoteEvent = remote
+        addLog("✓ Found RemoteEvent!")
+        addLog("Path: " .. remote:GetFullName())
+        addLog("Class: " .. remote.ClassName)
+        
+        -- Check if it has FireClient method
+        if remote.FireClient then
+            addLog("✓ FireClient method exists")
+            addLog("FireClient type: " .. type(remote.FireClient))
+        else
+            addLog("✗ FireClient method NOT found")
+        end
+        
+        -- Check if it has OnClientEvent
+        if remote.OnClientEvent then
+            addLog("✓ OnClientEvent exists")
+        else
+            addLog("✗ OnClientEvent NOT found")
+        end
+        
+        return true
+    else
+        addLog("✗ RemoteEvent NOT found")
+        addLog("Checking ReplicatedStorage structure...")
+        
+        -- Try to find any RemoteEvent
+        local allRemotes = {}
+        for _, obj in pairs(RS:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                table.insert(allRemotes, obj:GetFullName())
+            end
+        end
+        
+        if #allRemotes > 0 then
+            addLog("Found " .. #allRemotes .. " RemoteEvent(s):")
+            for i, path in ipairs(allRemotes) do
+                addLog("  " .. i .. ". " .. path)
+            end
+        else
+            addLog("No RemoteEvents found in ReplicatedStorage")
+        end
+        
+        return false
+    end
+end
+
+local function hookFireClient()
+    if not remoteEvent then
+        addLog("ERROR: RemoteEvent not found! Click 'Find Remote' first.")
+        return false
+    end
+    
+    if originalFireClient then
+        addLog("Already hooked! Unhooking first...")
+        remoteEvent.FireClient = originalFireClient
+        originalFireClient = nil
+    end
+    
+    addLog("\n=== Attempting to Hook FireClient ===")
+    
+    local success, err = pcall(function()
+        originalFireClient = remoteEvent.FireClient
+        addLog("✓ Saved original FireClient")
+        addLog("Original type: " .. type(originalFireClient))
+        
+        remoteEvent.FireClient = newcclosure(function(self, ...)
+            hookCount = hookCount + 1
+            local args = {...}
+            
+            -- Create a detailed string representation
+            local eventStr = "\n=== EVENT #" .. hookCount .. " ===\n"
+            eventStr = eventStr .. "Time: " .. os.date("%X") .. "\n"
+            eventStr = eventStr .. "Args count: " .. #args .. "\n\n"
+            
+            local function serializeValue(v, depth, maxDepth, indent)
+                depth = depth or 0
+                maxDepth = maxDepth or 5
+                indent = indent or ""
+                local nextIndent = indent .. "  "
+                
+                if depth > maxDepth then
+                    return "[Max Depth Reached]"
+                end
+                
+                local vType = type(v)
+                if vType == "string" then
+                    return string.format("%q", v)
+                elseif vType == "number" or vType == "boolean" then
+                    return tostring(v)
+                elseif vType == "nil" then
+                    return "nil"
+                elseif vType == "table" then
+                    -- Check if table is empty
+                    local hasItems = false
+                    for _ in pairs(v) do
+                        hasItems = true
+                        break
+                    end
+                    if not hasItems then
+                        return "{}"
+                    end
+                    
+                    local parts = {"{"}
+                    local isArray = true
+                    local maxIndex = 0
+                    local keyCount = 0
+                    
+                    -- First pass: check if it's an array and count keys
+                    for k in pairs(v) do
+                        keyCount = keyCount + 1
+                        if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+                            isArray = false
+                        end
+                        if type(k) == "number" and k > maxIndex then
+                            maxIndex = k
+                        end
+                    end
+                    
+                    if isArray and maxIndex > 0 then
+                        -- Array format
+                        for i = 1, math.min(maxIndex, 50) do
+                            if v[i] ~= nil then
+                                table.insert(parts, nextIndent .. "[" .. i .. "] = " .. serializeValue(v[i], depth + 1, maxDepth, nextIndent))
+                            end
+                        end
+                        if maxIndex > 50 then
+                            table.insert(parts, nextIndent .. "... (" .. (maxIndex - 50) .. " more items)")
+                        end
+                    else
+                        -- Dictionary format - show all keys
+                        local shown = 0
+                        for k, val in pairs(v) do
+                            shown = shown + 1
+                            if shown <= 100 then
+                                local keyStr
+                                if type(k) == "string" then
+                                    keyStr = "[" .. string.format("%q", k) .. "]"
+                                else
+                                    keyStr = "[" .. tostring(k) .. "]"
+                                end
+                                local valStr = serializeValue(val, depth + 1, maxDepth, nextIndent)
+                                table.insert(parts, nextIndent .. keyStr .. " = " .. valStr)
+                            end
+                        end
+                        if shown > 100 then
+                            table.insert(parts, nextIndent .. "... (" .. (shown - 100) .. " more keys)")
+                        end
+                    end
+                    table.insert(parts, indent .. "}")
+                    return table.concat(parts, "\n")
+                else
+                    return "[" .. vType .. ": " .. tostring(v) .. "]"
+                end
+            end
+            
+            for i, arg in ipairs(args) do
+                local argType = type(arg)
+                eventStr = eventStr .. "Arg[" .. i .. "] (type: " .. argType .. "):\n"
+                
+                if argType == "string" then
+                    eventStr = eventStr .. "  Value: " .. arg .. "\n"
+                elseif argType == "number" then
+                    eventStr = eventStr .. "  Value: " .. tostring(arg) .. "\n"
+                elseif argType == "table" then
+                    -- First, show basic info
+                    local keyCount = 0
+                    local arrayCount = 0
+                    for k in pairs(arg) do
+                        keyCount = keyCount + 1
+                        if type(k) == "number" then
+                            arrayCount = arrayCount + 1
+                        end
+                    end
+                    eventStr = eventStr .. "  Total keys: " .. keyCount .. " (array elements: " .. arrayCount .. ")\n"
+                    
+                    -- Show all keys first
+                    local keys = {}
+                    for k in pairs(arg) do
+                        table.insert(keys, tostring(k))
+                    end
+                    if #keys <= 20 then
+                        eventStr = eventStr .. "  Keys: " .. table.concat(keys, ", ") .. "\n"
+                    else
+                        eventStr = eventStr .. "  Keys (first 20): " .. table.concat({table.unpack(keys, 1, 20)}, ", ") .. "...\n"
+                    end
+                    
+                    -- Now serialize the full table
+                    eventStr = eventStr .. "  Full structure:\n"
+                    eventStr = eventStr .. serializeValue(arg, 0, 5, "  ") .. "\n"
+                elseif argType == "Instance" then
+                    if arg:IsA("Player") then
+                        eventStr = eventStr .. "  Player: " .. arg.Name .. "\n"
+                    else
+                        eventStr = eventStr .. "  Instance: " .. arg.ClassName .. "\n"
+                    end
+                else
+                    eventStr = eventStr .. "  " .. tostring(arg) .. "\n"
+                end
+                eventStr = eventStr .. "\n"
+            end
+            
+            eventStr = eventStr .. "=== END EVENT ===\n"
+            
+            -- Store event for batching
+            table.insert(pendingEvents, {
+                time = os.date("%X"),
+                data = eventStr
+            })
+            
+            -- Add to log display (truncated)
+            local logLines = {}
+            for line in string.gmatch(eventStr, "([^\n]+)") do
+                table.insert(logLines, line)
+            end
+            for i = 1, math.min(10, #logLines) do
+                addLog(logLines[i])
+            end
+            if #logLines > 10 then
+                addLog("... (full event stored for webhook)")
+            end
+            
+            -- Send batch if we have enough events
+            if #pendingEvents >= BATCH_SIZE then
+                addLog("\n=== Sending batch to Discord ===")
+                sendBatchWebhook(pendingEvents)
+                pendingEvents = {}
+            end
+            
+            -- Call original
+            return originalFireClient(self, unpack(args))
+        end)
+        
+        addLog("✓ Hook installed")
+        return true
+    end)
+    
+    if success then
+        addLog("✓ Hook successful!")
+        return true
+    else
+        addLog("✗ Hook failed: " .. tostring(err))
+        return false
+    end
+end
+
+local function testOnClientEvent()
+    if not remoteEvent then
+        addLog("ERROR: RemoteEvent not found!")
+        return
+    end
+    
+    addLog("\n=== Testing OnClientEvent ===")
+    
+    local success, err = pcall(function()
+        remoteEvent.OnClientEvent:Connect(function(...)
+            hookCount = hookCount + 1
+            local args = {...}
+            addLog("\n[OnClientEvent #" .. hookCount .. "] Event received!")
+            addLog("  Args count: " .. #args)
+            
+            for i, arg in ipairs(args) do
+                local argType = type(arg)
+                addLog("  Arg[" .. i .. "]: " .. argType)
+                if argType == "string" then
+                    addLog("    Value: " .. arg)
+                elseif argType == "number" then
+                    addLog("    Value: " .. tostring(arg))
+                elseif argType == "table" then
+                    local keyCount = 0
+                    for _ in pairs(arg) do
+                        keyCount = keyCount + 1
+                    end
+                    addLog("    Table with " .. keyCount .. " keys")
+                    local shown = 0
+                    for k, v in pairs(arg) do
+                        if shown < 3 then
+                            addLog("      " .. tostring(k) .. " = " .. tostring(v))
+                            shown = shown + 1
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+    
+    if success then
+        addLog("✓ OnClientEvent connected")
+    else
+        addLog("✗ OnClientEvent failed: " .. tostring(err))
+    end
+end
+
+local findBtn = Instance.new("TextButton")
+findBtn.Size = UDim2.new(0, 120, 0, 35)
+findBtn.Position = UDim2.new(0.5, -130, 0, 380)
+findBtn.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
+findBtn.BorderSizePixel = 0
+findBtn.Text = "Find Remote"
+findBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+findBtn.TextSize = 12
+findBtn.Font = Enum.Font.Gotham
+findBtn.Parent = f
+
+local hookBtn = Instance.new("TextButton")
+hookBtn.Size = UDim2.new(0, 120, 0, 35)
+hookBtn.Position = UDim2.new(0.5, 10, 0, 380)
+hookBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
+hookBtn.BorderSizePixel = 0
+hookBtn.Text = "Hook FireClient"
+hookBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hookBtn.TextSize = 12
+hookBtn.Font = Enum.Font.Gotham
+hookBtn.Parent = f
+
+local testBtn = Instance.new("TextButton")
+testBtn.Size = UDim2.new(0, 120, 0, 35)
+testBtn.Position = UDim2.new(0.5, -60, 0, 340)
+testBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 200)
+testBtn.BorderSizePixel = 0
+testBtn.Text = "Test OnClientEvent"
+testBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+testBtn.TextSize = 12
+testBtn.Font = Enum.Font.Gotham
+testBtn.Parent = f
+
+local sendBatchBtn = Instance.new("TextButton")
+sendBatchBtn.Size = UDim2.new(0, 120, 0, 35)
+sendBatchBtn.Position = UDim2.new(0.5, -60, 0, 380)
+sendBatchBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+sendBatchBtn.BorderSizePixel = 0
+sendBatchBtn.Text = "Send Batch Now"
+sendBatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+sendBatchBtn.TextSize = 11
+sendBatchBtn.Font = Enum.Font.Gotham
+sendBatchBtn.Parent = f
+
+findBtn.Activated:Connect(function()
+    findRemote()
+end)
+
+hookBtn.Activated:Connect(function()
+    hookFireClient()
+end)
+
+testBtn.Activated:Connect(function()
+    testOnClientEvent()
+end)
+
+sendBatchBtn.Activated:Connect(function()
+    if #pendingEvents > 0 then
+        addLog("\n=== Manually sending batch ===")
+        sendBatchWebhook(pendingEvents)
+        addLog("Sent " .. #pendingEvents .. " events")
+        pendingEvents = {}
+    else
+        addLog("No events to send!")
+    end
+end)
+
+-- Auto-find on load
+task.wait(1)
+addLog("HTTP Library: " .. (httpLibName ~= "" and httpLibName or "NOT FOUND"))
+findRemote()
+
