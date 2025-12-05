@@ -1,5 +1,5 @@
 -- Test file for remote event hooking in Delta Executor Mobile
--- VERSION 2.0 - WITH WEBHOOK SUPPORT
+-- VERSION 3.0 - FIXED EVENT STORAGE & TABLE SERIALIZATION
 -- This will help us debug why events aren't being captured
 
 local P = game:GetService("Players")
@@ -9,12 +9,12 @@ local newcclosure = newcclosure or function(func) return func end
 
 -- IMMEDIATE VERSION CHECK - This prints immediately to verify version
 print("========================================")
-print("REMOTE HOOK TEST - VERSION 2.0")
-print("WEBHOOK SUPPORT ENABLED")
+print("REMOTE HOOK TEST - VERSION 3.0")
+print("FIXED: Event storage & table serialization")
 print("========================================")
 game:GetService("StarterGui"):SetCore("SendNotification", {
-    Title = "Remote Hook Test v2.0",
-    Text = "Webhook support enabled!",
+    Title = "Remote Hook Test v3.0",
+    Text = "Fixed event storage!",
     Duration = 5
 })
 
@@ -23,7 +23,12 @@ wait(1)
 -- Webhook setup
 local WEBHOOK = "https://discord.com/api/webhooks/1227328649322168391/2SdD38qqsMjyktorFtdOLO7p9yN_RK_VdVocfiuT-SxRVKX1t5dMEw3STYxfSWCz7IeQ"
 local BATCH_SIZE = 10
-local pendingEvents = {}
+
+-- Use _G to ensure global scope for pendingEvents
+if not _G.RemoteHookPendingEvents then
+    _G.RemoteHookPendingEvents = {}
+end
+local pendingEvents = _G.RemoteHookPendingEvents
 
 -- HTTP library detection (same as main script)
 local httpLib = nil
@@ -172,7 +177,7 @@ f.Parent = g
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 40)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-title.Text = "Remote Hook Test v2.0 - WEBHOOK ENABLED"
+title.Text = "Remote Hook Test v3.0 - FIXED"
 title.TextColor3 = Color3.fromRGB(50, 255, 50)
 title.TextSize = 16
 title.Font = Enum.Font.GothamBold
@@ -289,6 +294,12 @@ local function hookFireClient()
         remoteEvent.FireClient = newcclosure(function(self, ...)
             hookCount = hookCount + 1
             local args = {...}
+            
+            -- Ensure we're using the global pendingEvents
+            if not _G.RemoteHookPendingEvents then
+                _G.RemoteHookPendingEvents = {}
+            end
+            pendingEvents = _G.RemoteHookPendingEvents
             
             -- Create a detailed string representation
             local eventStr = "\n=== EVENT #" .. hookCount .. " ===\n"
@@ -412,36 +423,50 @@ local function hookFireClient()
                     local serialized = serializeValue(arg, 0, 6, "  ")
                     eventStr = eventStr .. serialized .. "\n"
                     
-                    -- Special handling for Pets table - try to access it directly using pairs
-                    if arg.Pets then
+                    -- Special handling for Pets table - use rawget and direct property access
+                    local petsTable = rawget(arg, "Pets") or arg.Pets
+                    if petsTable then
                         eventStr = eventStr .. "  === PETS TABLE DETAILS ===\n"
-                        if type(arg.Pets) == "table" then
+                        if type(petsTable) == "table" then
                             local petCount = 0
-                            -- Count pets first
-                            for _ in pairs(arg.Pets) do
+                            local petKeys = {}
+                            -- Collect all keys first
+                            for k in pairs(petsTable) do
                                 petCount = petCount + 1
+                                table.insert(petKeys, k)
                             end
-                            eventStr = eventStr .. "  Pets count: " .. petCount .. "\n"
+                            eventStr = eventStr .. "  Pets count: " .. petCount .. " (keys: " .. table.concat(petKeys, ", ") .. ")\n"
                             
-                            -- Now iterate and show each pet
+                            -- Try both numeric and key-based access
                             local petIndex = 0
-                            for k, petData in pairs(arg.Pets) do
+                            for i, k in ipairs(petKeys) do
                                 petIndex = petIndex + 1
-                                eventStr = eventStr .. "  Pet[" .. tostring(k) .. "]:\n"
+                                local petData = rawget(petsTable, k) or petsTable[k]
+                                eventStr = eventStr .. "  Pet[" .. tostring(k) .. "] (index " .. i .. "):\n"
+                                
                                 if type(petData) == "table" then
-                                    -- Show all keys in petData
-                                    for pk, pv in pairs(petData) do
-                                        eventStr = eventStr .. "    " .. tostring(pk) .. " = "
-                                        if type(pv) == "table" then
-                                            eventStr = eventStr .. "{\n"
-                                            for p2k, p2v in pairs(pv) do
-                                                eventStr = eventStr .. "      " .. tostring(p2k) .. " = " .. tostring(p2v) .. "\n"
-                                            end
-                                            eventStr = eventStr .. "    }\n"
+                                    -- Access Pet property directly
+                                    local petObj = rawget(petData, "Pet") or petData.Pet
+                                    if petObj then
+                                        if type(petObj) == "table" then
+                                            eventStr = eventStr .. "    Pet.Name = " .. tostring(rawget(petObj, "Name") or petObj.Name or "nil") .. "\n"
+                                            eventStr = eventStr .. "    Pet.Shiny = " .. tostring(rawget(petObj, "Shiny") or petObj.Shiny or "nil") .. "\n"
+                                            eventStr = eventStr .. "    Pet.Mythic = " .. tostring(rawget(petObj, "Mythic") or petObj.Mythic or "nil") .. "\n"
+                                            eventStr = eventStr .. "    Pet.Type = " .. tostring(rawget(petObj, "Type") or petObj.Type or "nil") .. "\n"
                                         else
-                                            eventStr = eventStr .. tostring(pv) .. "\n"
+                                            eventStr = eventStr .. "    Pet = " .. tostring(petObj) .. "\n"
                                         end
                                     end
+                                    eventStr = eventStr .. "    Deleted = " .. tostring(rawget(petData, "Deleted") or petData.Deleted or "nil") .. "\n"
+                                    eventStr = eventStr .. "    New = " .. tostring(rawget(petData, "New") or petData.New or "nil") .. "\n"
+                                    
+                                    -- Also try iterating all keys
+                                    eventStr = eventStr .. "    All keys: "
+                                    local allKeys = {}
+                                    for pk in pairs(petData) do
+                                        table.insert(allKeys, tostring(pk))
+                                    end
+                                    eventStr = eventStr .. table.concat(allKeys, ", ") .. "\n"
                                 else
                                     eventStr = eventStr .. "    Type: " .. type(petData) .. " = " .. tostring(petData) .. "\n"
                                 end
@@ -451,7 +476,7 @@ local function hookFireClient()
                                 end
                             end
                         else
-                            eventStr = eventStr .. "  Pets is not a table! Type: " .. type(arg.Pets) .. " = " .. tostring(arg.Pets) .. "\n"
+                            eventStr = eventStr .. "  Pets is not a table! Type: " .. type(petsTable) .. " = " .. tostring(petsTable) .. "\n"
                         end
                     end
                 elseif argType == "Instance" then
@@ -468,19 +493,26 @@ local function hookFireClient()
             
             eventStr = eventStr .. "=== END EVENT ===\n"
             
-            -- Store event for batching - use explicit reference to global
+            -- Store event for batching - ensure using global
             local eventData = {
                 time = os.date("%X"),
-                data = eventStr
+                data = eventStr,
+                hookNumber = hookCount
             }
-            table.insert(pendingEvents, eventData)
+            
+            -- Use global table directly
+            table.insert(_G.RemoteHookPendingEvents, eventData)
+            pendingEvents = _G.RemoteHookPendingEvents
             
             -- Debug: verify storage
-            addLog("DEBUG: Stored event #" .. hookCount .. ", pendingEvents count: " .. #pendingEvents)
+            local currentCount = #_G.RemoteHookPendingEvents
+            addLog("DEBUG: Stored event #" .. hookCount .. ", global count: " .. currentCount)
+            print("EVENT STORED: Hook #" .. hookCount .. ", Pending: " .. currentCount)
             
-            -- Update status
+            -- Update status - use global count
+            local globalCount = #_G.RemoteHookPendingEvents
             if statusLabel then
-                statusLabel.Text = "Events: " .. hookCount .. " | Pending: " .. #pendingEvents .. "/" .. BATCH_SIZE
+                statusLabel.Text = "Events: " .. hookCount .. " | Pending: " .. globalCount .. "/" .. BATCH_SIZE
             end
             
             -- Add to log display (truncated)
@@ -495,17 +527,19 @@ local function hookFireClient()
                 addLog("... (full event stored for webhook)")
             end
             
-            addLog("Pending events: " .. #pendingEvents .. "/" .. BATCH_SIZE)
+            local globalCount = #_G.RemoteHookPendingEvents
+            addLog("Pending events: " .. globalCount .. "/" .. BATCH_SIZE)
             
             -- Send batch if we have enough events
-            if #pendingEvents >= BATCH_SIZE then
+            if globalCount >= BATCH_SIZE then
                 addLog("\n=== Sending batch to Discord ===")
-                addLog("Batch size: " .. #pendingEvents)
+                addLog("Batch size: " .. globalCount)
                 local batchToSend = {}
-                for i = 1, #pendingEvents do
-                    table.insert(batchToSend, pendingEvents[i])
+                for i = 1, globalCount do
+                    table.insert(batchToSend, _G.RemoteHookPendingEvents[i])
                 end
-                pendingEvents = {}
+                _G.RemoteHookPendingEvents = {}
+                pendingEvents = _G.RemoteHookPendingEvents
                 sendBatchWebhook(batchToSend)
                 if statusLabel then
                     statusLabel.Text = "Events: " .. hookCount .. " | Pending: 0/" .. BATCH_SIZE .. " (Sending...)"
@@ -657,38 +691,39 @@ end)
 sendBatchBtn.Activated:Connect(function()
     addLog("\n=== Manual Send Batch ===")
     addLog("Hook count: " .. hookCount)
-    addLog("pendingEvents type: " .. type(pendingEvents))
-    addLog("pendingEvents count: " .. #pendingEvents)
     
-    -- Check if pendingEvents is actually the global one
-    if pendingEvents == nil then
-        addLog("ERROR: pendingEvents is nil!")
-        return
+    -- Use global table directly
+    if not _G.RemoteHookPendingEvents then
+        _G.RemoteHookPendingEvents = {}
     end
+    local globalEvents = _G.RemoteHookPendingEvents
+    local globalCount = #globalEvents
     
-    -- Make sure we're using the global pendingEvents - copy all events
-    local eventsToSend = {}
-    local count = 0
-    for i, event in ipairs(pendingEvents) do
-        count = count + 1
-        table.insert(eventsToSend, event)
-    end
+    addLog("Global pendingEvents count: " .. globalCount)
+    print("MANUAL SEND: Global count = " .. globalCount)
     
-    addLog("Copied " .. count .. " events to send")
-    
-    if #eventsToSend > 0 then
+    if globalCount > 0 then
+        -- Copy all events
+        local eventsToSend = {}
+        for i = 1, globalCount do
+            table.insert(eventsToSend, globalEvents[i])
+        end
+        
         addLog("Sending " .. #eventsToSend .. " events to webhook...")
         sendBatchWebhook(eventsToSend)
-        -- Clear pending events
-        pendingEvents = {}
+        
+        -- Clear global table
+        _G.RemoteHookPendingEvents = {}
+        pendingEvents = _G.RemoteHookPendingEvents
+        
         if statusLabel then
             statusLabel.Text = "Events: " .. hookCount .. " | Pending: 0/" .. BATCH_SIZE .. " (Sent!)"
         end
         addLog("Batch sent and cleared!")
     else
-        addLog("ERROR: No events to send!")
-        addLog("This might mean events aren't being stored properly.")
-        addLog("Try hatching an egg first, then check if pendingEvents updates.")
+        addLog("ERROR: No events in global table!")
+        addLog("Hook count shows " .. hookCount .. " events fired")
+        addLog("But global table is empty - events may not be storing properly")
     end
 end)
 
@@ -728,4 +763,5 @@ end)
 task.wait(1)
 addLog("HTTP Library: " .. (httpLibName ~= "" and httpLibName or "NOT FOUND"))
 findRemote()
+
 
