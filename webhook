@@ -1,17 +1,21 @@
--- Test file for webhook sending in Delta Executor Mobile
--- This will help us debug HTTP/webhook issues
+-- Test file for remote event hooking in Delta Executor Mobile
+-- This will help us debug why events aren't being captured
 
 local P = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
 local p = P.LocalPlayer
+local newcclosure = newcclosure or function(func) return func end
+
+wait(1)
 
 -- Create a simple GUI for testing
 local g = Instance.new("ScreenGui")
-g.Name = "WebhookTest"
+g.Name = "RemoteHookTest"
 g.Parent = p.PlayerGui
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 400, 0, 300)
-f.Position = UDim2.new(0.5, -200, 0.5, -150)
+f.Size = UDim2.new(0, 400, 0, 400)
+f.Position = UDim2.new(0.5, -200, 0.5, -200)
 f.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 f.BorderSizePixel = 0
 f.Parent = g
@@ -19,18 +23,18 @@ f.Parent = g
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 40)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-title.Text = "Webhook Test - Delta Mobile"
+title.Text = "Remote Event Hook Test"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 18
 title.Font = Enum.Font.GothamBold
 title.Parent = f
 
 local logDisplay = Instance.new("TextLabel")
-logDisplay.Size = UDim2.new(0, 380, 0, 200)
+logDisplay.Size = UDim2.new(0, 380, 0, 320)
 logDisplay.Position = UDim2.new(0.5, -190, 0, 50)
 logDisplay.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 logDisplay.BorderSizePixel = 0
-logDisplay.Text = "Click 'Test Webhook' to start..."
+logDisplay.Text = "Click 'Find Remote' to start..."
 logDisplay.TextColor3 = Color3.fromRGB(150, 200, 255)
 logDisplay.TextSize = 10
 logDisplay.Font = Enum.Font.Gotham
@@ -39,18 +43,6 @@ logDisplay.TextXAlignment = Enum.TextXAlignment.Left
 logDisplay.TextYAlignment = Enum.TextYAlignment.Top
 logDisplay.Parent = f
 
-local webhookInput = Instance.new("TextBox")
-webhookInput.Size = UDim2.new(0, 380, 0, 30)
-webhookInput.Position = UDim2.new(0.5, -190, 0, 260)
-webhookInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-webhookInput.BorderSizePixel = 0
-webhookInput.Text = ""
-webhookInput.PlaceholderText = "Discord webhook URL"
-webhookInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-webhookInput.TextSize = 10
-webhookInput.Font = Enum.Font.Gotham
-webhookInput.Parent = f
-
 local function addLog(text)
     local current = logDisplay.Text or ""
     local lines = {}
@@ -58,388 +50,227 @@ local function addLog(text)
         table.insert(lines, line)
     end
     table.insert(lines, text)
-    while #lines > 15 do
+    while #lines > 20 do
         table.remove(lines, 1)
     end
     logDisplay.Text = table.concat(lines, "\n")
 end
 
--- Test all possible HTTP methods
-local function detectHttpLib()
-    addLog("=== Detecting HTTP Library ===")
+local remoteEvent = nil
+local originalFireClient = nil
+local hookCount = 0
+
+local function findRemote()
+    addLog("=== Finding Remote Event ===")
     
-    if delta then
-        addLog("delta object exists")
-        if delta.request then
-            addLog("✓ delta.request found")
+    local success, remote = pcall(function()
+        return RS:FindFirstChild("Shared") 
+            and RS.Shared:FindFirstChild("Framework") 
+            and RS.Shared.Framework:FindFirstChild("Network") 
+            and RS.Shared.Framework.Network:FindFirstChild("Remote") 
+            and RS.Shared.Framework.Network.Remote:FindFirstChild("RemoteEvent")
+    end)
+    
+    if success and remote then
+        remoteEvent = remote
+        addLog("✓ Found RemoteEvent!")
+        addLog("Path: " .. remote:GetFullName())
+        addLog("Class: " .. remote.ClassName)
+        
+        -- Check if it has FireClient method
+        if remote.FireClient then
+            addLog("✓ FireClient method exists")
+            addLog("FireClient type: " .. type(remote.FireClient))
         else
-            addLog("✗ delta.request NOT found")
+            addLog("✗ FireClient method NOT found")
         end
-        if delta.http then
-            addLog("✓ delta.http found")
+        
+        -- Check if it has OnClientEvent
+        if remote.OnClientEvent then
+            addLog("✓ OnClientEvent exists")
         else
-            addLog("✗ delta.http NOT found")
+            addLog("✗ OnClientEvent NOT found")
         end
-        -- Check for other delta methods
-        for k, v in pairs(delta) do
-            if type(v) == "function" or (type(v) == "table" and (v.post or v.request)) then
-                addLog("Found delta." .. tostring(k))
+        
+        return true
+    else
+        addLog("✗ RemoteEvent NOT found")
+        addLog("Checking ReplicatedStorage structure...")
+        
+        -- Try to find any RemoteEvent
+        local allRemotes = {}
+        for _, obj in pairs(RS:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                table.insert(allRemotes, obj:GetFullName())
             end
         end
-    else
-        addLog("✗ delta object NOT found")
-    end
-    
-    if _G.http_request then
-        addLog("✓ _G.http_request found")
-    else
-        addLog("✗ _G.http_request NOT found")
-    end
-    
-    if syn and syn.request then
-        addLog("✓ syn.request found")
-    else
-        addLog("✗ syn.request NOT found")
-    end
-    
-    if request then
-        addLog("✓ request found")
-        addLog("request type: " .. type(request))
-        if type(request) == "function" then
-            addLog("request is a function")
-        elseif type(request) == "table" then
-            addLog("request is a table, checking methods:")
-            for k, v in pairs(request) do
-                if type(v) == "function" then
-                    addLog("  request." .. tostring(k) .. " (function)")
-                else
-                    addLog("  request." .. tostring(k) .. " = " .. tostring(v))
-                end
+        
+        if #allRemotes > 0 then
+            addLog("Found " .. #allRemotes .. " RemoteEvent(s):")
+            for i, path in ipairs(allRemotes) do
+                addLog("  " .. i .. ". " .. path)
             end
+        else
+            addLog("No RemoteEvents found in ReplicatedStorage")
         end
-    else
-        addLog("✗ request NOT found")
-    end
-    
-    if http and http.post then
-        addLog("✓ http.post found")
-    else
-        addLog("✗ http.post NOT found")
+        
+        return false
     end
 end
 
--- Try different HTTP methods
-local function testWebhook(url)
-    addLog("=== Testing Webhook ===")
-    
-    -- Clean and validate URL
-    url = string.gsub(url, "^%s*(.-)%s*$", "%1")  -- Trim whitespace
-    addLog("URL: " .. string.sub(url, 1, 60) .. "...")
-    addLog("URL length: " .. #url)
-    
-    -- Check if URL is valid
-    if url == "" then
-        addLog("ERROR: Empty URL!")
-        return
+local function hookFireClient()
+    if not remoteEvent then
+        addLog("ERROR: RemoteEvent not found! Click 'Find Remote' first.")
+        return false
     end
     
-    if not string.find(url, "^https?://") then
-        addLog("ERROR: URL must start with http:// or https://")
-        addLog("Current URL: " .. string.sub(url, 1, 20))
-        return
+    if originalFireClient then
+        addLog("Already hooked! Unhooking first...")
+        remoteEvent.FireClient = originalFireClient
+        originalFireClient = nil
     end
     
-    local testPayload = {
-        content = "Test from Delta Mobile - " .. os.date("%X")
-    }
+    addLog("\n=== Attempting to Hook FireClient ===")
     
-    -- Simple JSON encoder
-    local function jsonEncode(t)
-        local parts = {}
-        for k, v in pairs(t) do
-            local key = type(k) == "string" and string.format("%q", k) or tostring(k)
-            local val
-            if type(v) == "string" then
-                val = string.format("%q", v)
-            elseif type(v) == "number" or type(v) == "boolean" then
-                val = tostring(v)
-            elseif type(v) == "nil" then
-                val = "null"
-            else
-                val = string.format("%q", tostring(v))
-            end
-            table.insert(parts, key .. ":" .. val)
-        end
-        return "{" .. table.concat(parts, ",") .. "}"
-    end
-    
-    local jsonBody = jsonEncode(testPayload)
-    local headers = {["Content-Type"] = "application/json"}
-    
-    addLog("JSON: " .. jsonBody)
-    addLog("Headers: Content-Type = application/json")
-    
-    -- Test 1: delta.request
-    if delta and delta.request then
-        addLog("\n--- Testing delta.request ---")
-        local success, result = pcall(function()
-            local res = delta.request({
-                Url = url,
-                Method = "POST",
-                Headers = headers,
-                Body = jsonBody
-            })
-            return res
-        end)
+    local success, err = pcall(function()
+        originalFireClient = remoteEvent.FireClient
+        addLog("✓ Saved original FireClient")
+        addLog("Original type: " .. type(originalFireClient))
         
-        if success then
-            addLog("✓ delta.request call succeeded")
-            if result then
-                addLog("Result type: " .. type(result))
-                if type(result) == "table" then
-                    for k, v in pairs(result) do
-                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
-                    end
-                else
-                    addLog("Result: " .. tostring(result))
-                end
-            else
-                addLog("✗ delta.request returned nil")
-            end
-        else
-            addLog("✗ delta.request failed: " .. tostring(result))
-        end
-    end
-    
-    -- Test 2: delta.http.post
-    if delta and delta.http and delta.http.post then
-        addLog("\n--- Testing delta.http.post ---")
-        local success, result = pcall(function()
-            return delta.http.post(url, jsonBody, headers)
-        end)
-        
-        if success then
-            addLog("✓ delta.http.post call succeeded")
-            addLog("Result: " .. tostring(result))
-        else
-            addLog("✗ delta.http.post failed: " .. tostring(result))
-        end
-    end
-    
-    -- Test 3: _G.http_request
-    if _G.http_request then
-        addLog("\n--- Testing _G.http_request ---")
-        local success, result = pcall(function()
-            return _G.http_request({
-                Url = url,
-                Method = "POST",
-                Headers = headers,
-                Body = jsonBody
-            })
-        end)
-        
-        if success then
-            addLog("✓ _G.http_request call succeeded")
-            if result then
-                addLog("Result type: " .. type(result))
-                if type(result) == "table" then
-                    for k, v in pairs(result) do
-                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
-                    end
-                else
-                    addLog("Result: " .. tostring(result))
-                end
-            else
-                addLog("✗ _G.http_request returned nil")
-            end
-        else
-            addLog("✗ _G.http_request failed: " .. tostring(result))
-        end
-    end
-    
-    -- Test 4: syn.request
-    if syn and syn.request then
-        addLog("\n--- Testing syn.request ---")
-        local success, result = pcall(function()
-            return syn.request({
-                Url = url,
-                Method = "POST",
-                Headers = headers,
-                Body = jsonBody
-            })
-        end)
-        
-        if success then
-            addLog("✓ syn.request call succeeded")
-            if result then
-                addLog("Result type: " .. type(result))
-                if type(result) == "table" then
-                    for k, v in pairs(result) do
-                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
-                    end
-                else
-                    addLog("Result: " .. tostring(result))
-                end
-            else
-                addLog("✗ syn.request returned nil")
-            end
-        else
-            addLog("✗ syn.request failed: " .. tostring(result))
-        end
-    end
-    
-    -- Test 5: request (try multiple formats)
-    if request then
-        addLog("\n--- Testing request (lowercase) ---")
-        local success, result = pcall(function()
-            return request({
-                url = url,
-                method = "POST",
-                headers = headers,
-                body = jsonBody
-            })
-        end)
-        
-        if success then
-            addLog("✓ request call succeeded")
-            if result then
-                addLog("Result type: " .. type(result))
-                if type(result) == "table" then
-                    for k, v in pairs(result) do
-                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
-                    end
-                else
-                    addLog("Result: " .. tostring(result))
-                end
-            else
-                addLog("✗ request returned nil")
-            end
-        else
-            addLog("✗ request failed: " .. tostring(result))
-        end
-        
-        -- Try uppercase format
-        addLog("\n--- Testing request (uppercase) ---")
-        local success2, result2 = pcall(function()
-            return request({
-                Url = url,
-                Method = "POST",
-                Headers = headers,
-                Body = jsonBody
-            })
-        end)
-        
-        if success2 then
-            addLog("✓ request (uppercase) call succeeded")
-            if result2 then
-                addLog("Result type: " .. type(result2))
-                if type(result2) == "table" then
-                    for k, v in pairs(result2) do
-                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
-                    end
-                else
-                    addLog("Result: " .. tostring(result2))
-                end
-            else
-                addLog("✗ request (uppercase) returned nil")
-            end
-        else
-            addLog("✗ request (uppercase) failed: " .. tostring(result2))
-        end
-        
-        -- Try direct function call format
-        addLog("\n--- Testing request.post (if exists) ---")
-        if request.post then
-            local success3, result3 = pcall(function()
-                return request.post(url, jsonBody, headers)
-            end)
+        remoteEvent.FireClient = newcclosure(function(self, ...)
+            hookCount = hookCount + 1
+            local args = {...}
+            addLog("\n[HOOK #" .. hookCount .. "] FireClient called!")
+            addLog("  Args count: " .. #args)
             
-            if success3 then
-                addLog("✓ request.post call succeeded")
-                addLog("Result: " .. tostring(result3))
-            else
-                addLog("✗ request.post failed: " .. tostring(result3))
+            for i, arg in ipairs(args) do
+                local argType = type(arg)
+                addLog("  Arg[" .. i .. "]: " .. argType)
+                
+                if argType == "string" then
+                    addLog("    Value: " .. arg)
+                elseif argType == "table" then
+                    addLog("    Table keys: " .. tostring(#arg) .. " array elements")
+                    if arg[1] and type(arg[1]) == "string" then
+                        addLog("    First element: " .. arg[1])
+                    end
+                    if arg.Pets then
+                        addLog("    Has Pets array!")
+                        if type(arg.Pets) == "table" then
+                            addLog("    Pets count: " .. #arg.Pets)
+                            for j, petData in ipairs(arg.Pets) do
+                                if petData.Pet and petData.Pet.Name then
+                                    addLog("      Pet " .. j .. ": " .. petData.Pet.Name)
+                                end
+                            end
+                        end
+                    end
+                elseif argType == "Instance" then
+                    if arg:IsA("Player") then
+                        addLog("    Player: " .. arg.Name)
+                    else
+                        addLog("    Instance: " .. arg.ClassName)
+                    end
+                end
             end
-        else
-            addLog("request.post not available")
-        end
-        
-        -- Try with just url and body
-        addLog("\n--- Testing request (url + body only) ---")
-        local success4, result4 = pcall(function()
-            return request(url, jsonBody)
+            
+            -- Call original
+            return originalFireClient(self, unpack(args))
         end)
         
-        if success4 then
-            addLog("✓ request(url, body) call succeeded")
-            addLog("Result: " .. tostring(result4))
-        else
-            addLog("✗ request(url, body) failed: " .. tostring(result4))
-        end
-        
-        -- Validate URL format
-        addLog("\n--- URL Validation ---")
-        addLog("URL length: " .. #url)
-        addLog("Starts with http: " .. tostring(string.find(url, "^https?://") ~= nil))
-        if string.find(url, "^https?://") == nil then
-            addLog("⚠ WARNING: URL doesn't start with http:// or https://")
-        end
-    end
+        addLog("✓ Hook installed")
+        return true
+    end)
     
-    -- Test 6: http.post
-    if http and http.post then
-        addLog("\n--- Testing http.post ---")
-        local success, result = pcall(function()
-            return http.post(url, jsonBody, headers)
-        end)
-        
-        if success then
-            addLog("✓ http.post call succeeded")
-            addLog("Result: " .. tostring(result))
-        else
-            addLog("✗ http.post failed: " .. tostring(result))
-        end
+    if success then
+        addLog("✓ Hook successful!")
+        return true
+    else
+        addLog("✗ Hook failed: " .. tostring(err))
+        return false
     end
-    
-    addLog("\n=== Test Complete ===")
 end
+
+local function testOnClientEvent()
+    if not remoteEvent then
+        addLog("ERROR: RemoteEvent not found!")
+        return
+    end
+    
+    addLog("\n=== Testing OnClientEvent ===")
+    
+    local success, err = pcall(function()
+        remoteEvent.OnClientEvent:Connect(function(...)
+            hookCount = hookCount + 1
+            local args = {...}
+            addLog("\n[OnClientEvent #" .. hookCount .. "] Event received!")
+            addLog("  Args count: " .. #args)
+            
+            for i, arg in ipairs(args) do
+                local argType = type(arg)
+                addLog("  Arg[" .. i .. "]: " .. argType)
+                if argType == "string" then
+                    addLog("    Value: " .. arg)
+                elseif argType == "table" then
+                    addLog("    Table with " .. tostring(#arg) .. " elements")
+                end
+            end
+        end)
+    end)
+    
+    if success then
+        addLog("✓ OnClientEvent connected")
+    else
+        addLog("✗ OnClientEvent failed: " .. tostring(err))
+    end
+end
+
+local findBtn = Instance.new("TextButton")
+findBtn.Size = UDim2.new(0, 120, 0, 35)
+findBtn.Position = UDim2.new(0.5, -130, 0, 380)
+findBtn.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
+findBtn.BorderSizePixel = 0
+findBtn.Text = "Find Remote"
+findBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+findBtn.TextSize = 12
+findBtn.Font = Enum.Font.Gotham
+findBtn.Parent = f
+
+local hookBtn = Instance.new("TextButton")
+hookBtn.Size = UDim2.new(0, 120, 0, 35)
+hookBtn.Position = UDim2.new(0.5, 10, 0, 380)
+hookBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
+hookBtn.BorderSizePixel = 0
+hookBtn.Text = "Hook FireClient"
+hookBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hookBtn.TextSize = 12
+hookBtn.Font = Enum.Font.Gotham
+hookBtn.Parent = f
 
 local testBtn = Instance.new("TextButton")
-testBtn.Size = UDim2.new(0, 180, 0, 35)
-testBtn.Position = UDim2.new(0.5, -195, 0, 220)
-testBtn.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
+testBtn.Size = UDim2.new(0, 120, 0, 35)
+testBtn.Position = UDim2.new(0.5, -60, 0, 340)
+testBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 200)
 testBtn.BorderSizePixel = 0
-testBtn.Text = "Test Webhook"
+testBtn.Text = "Test OnClientEvent"
 testBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 testBtn.TextSize = 12
 testBtn.Font = Enum.Font.Gotham
 testBtn.Parent = f
 
-local detectBtn = Instance.new("TextButton")
-detectBtn.Size = UDim2.new(0, 180, 0, 35)
-detectBtn.Position = UDim2.new(0.5, 15, 0, 220)
-detectBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 200)
-detectBtn.BorderSizePixel = 0
-detectBtn.Text = "Detect HTTP Lib"
-detectBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-detectBtn.TextSize = 12
-detectBtn.Font = Enum.Font.Gotham
-detectBtn.Parent = f
+findBtn.Activated:Connect(function()
+    findRemote()
+end)
 
-detectBtn.Activated:Connect(function()
-    detectHttpLib()
+hookBtn.Activated:Connect(function()
+    hookFireClient()
 end)
 
 testBtn.Activated:Connect(function()
-    local url = webhookInput.Text
-    url = string.gsub(url, "^%s*(.-)%s*$", "%1")
-    if url == "" then
-        addLog("ERROR: No webhook URL provided!")
-        return
-    end
-    testWebhook(url)
+    testOnClientEvent()
 end)
 
--- Auto-detect on load
-task.wait(0.5)
-detectHttpLib()
+-- Auto-find on load
+task.wait(1)
+findRemote()
+
