@@ -1,0 +1,348 @@
+-- Test file for webhook sending in Delta Executor Mobile
+-- This will help us debug HTTP/webhook issues
+
+local P = game:GetService("Players")
+local p = P.LocalPlayer
+
+-- Create a simple GUI for testing
+local g = Instance.new("ScreenGui")
+g.Name = "WebhookTest"
+g.Parent = p.PlayerGui
+
+local f = Instance.new("Frame")
+f.Size = UDim2.new(0, 400, 0, 300)
+f.Position = UDim2.new(0.5, -200, 0.5, -150)
+f.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+f.BorderSizePixel = 0
+f.Parent = g
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 40)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+title.Text = "Webhook Test - Delta Mobile"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 18
+title.Font = Enum.Font.GothamBold
+title.Parent = f
+
+local logDisplay = Instance.new("TextLabel")
+logDisplay.Size = UDim2.new(0, 380, 0, 200)
+logDisplay.Position = UDim2.new(0.5, -190, 0, 50)
+logDisplay.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+logDisplay.BorderSizePixel = 0
+logDisplay.Text = "Click 'Test Webhook' to start..."
+logDisplay.TextColor3 = Color3.fromRGB(150, 200, 255)
+logDisplay.TextSize = 10
+logDisplay.Font = Enum.Font.Gotham
+logDisplay.TextWrapped = true
+logDisplay.TextXAlignment = Enum.TextXAlignment.Left
+logDisplay.TextYAlignment = Enum.TextYAlignment.Top
+logDisplay.Parent = f
+
+local webhookInput = Instance.new("TextBox")
+webhookInput.Size = UDim2.new(0, 380, 0, 30)
+webhookInput.Position = UDim2.new(0.5, -190, 0, 260)
+webhookInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+webhookInput.BorderSizePixel = 0
+webhookInput.Text = ""
+webhookInput.PlaceholderText = "Discord webhook URL"
+webhookInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+webhookInput.TextSize = 10
+webhookInput.Font = Enum.Font.Gotham
+webhookInput.Parent = f
+
+local function addLog(text)
+    local current = logDisplay.Text or ""
+    local lines = {}
+    for line in string.gmatch(current, "([^\n]+)") do
+        table.insert(lines, line)
+    end
+    table.insert(lines, text)
+    while #lines > 15 do
+        table.remove(lines, 1)
+    end
+    logDisplay.Text = table.concat(lines, "\n")
+end
+
+-- Test all possible HTTP methods
+local function detectHttpLib()
+    addLog("=== Detecting HTTP Library ===")
+    
+    if delta then
+        addLog("delta object exists")
+        if delta.request then
+            addLog("✓ delta.request found")
+        else
+            addLog("✗ delta.request NOT found")
+        end
+        if delta.http then
+            addLog("✓ delta.http found")
+        else
+            addLog("✗ delta.http NOT found")
+        end
+        -- Check for other delta methods
+        for k, v in pairs(delta) do
+            if type(v) == "function" or (type(v) == "table" and (v.post or v.request)) then
+                addLog("Found delta." .. tostring(k))
+            end
+        end
+    else
+        addLog("✗ delta object NOT found")
+    end
+    
+    if _G.http_request then
+        addLog("✓ _G.http_request found")
+    else
+        addLog("✗ _G.http_request NOT found")
+    end
+    
+    if syn and syn.request then
+        addLog("✓ syn.request found")
+    else
+        addLog("✗ syn.request NOT found")
+    end
+    
+    if request then
+        addLog("✓ request found")
+    else
+        addLog("✗ request NOT found")
+    end
+    
+    if http and http.post then
+        addLog("✓ http.post found")
+    else
+        addLog("✗ http.post NOT found")
+    end
+end
+
+-- Try different HTTP methods
+local function testWebhook(url)
+    addLog("=== Testing Webhook ===")
+    addLog("URL: " .. string.sub(url, 1, 50) .. "...")
+    
+    local testPayload = {
+        content = "Test from Delta Mobile - " .. os.date("%X")
+    }
+    
+    -- Simple JSON encoder
+    local function jsonEncode(t)
+        local parts = {}
+        for k, v in pairs(t) do
+            local key = type(k) == "string" and string.format("%q", k) or tostring(k)
+            local val
+            if type(v) == "string" then
+                val = string.format("%q", v)
+            elseif type(v) == "number" or type(v) == "boolean" then
+                val = tostring(v)
+            elseif type(v) == "nil" then
+                val = "null"
+            else
+                val = string.format("%q", tostring(v))
+            end
+            table.insert(parts, key .. ":" .. val)
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    
+    local jsonBody = jsonEncode(testPayload)
+    local headers = {["Content-Type"] = "application/json"}
+    
+    addLog("JSON: " .. jsonBody)
+    
+    -- Test 1: delta.request
+    if delta and delta.request then
+        addLog("\n--- Testing delta.request ---")
+        local success, result = pcall(function()
+            local res = delta.request({
+                Url = url,
+                Method = "POST",
+                Headers = headers,
+                Body = jsonBody
+            })
+            return res
+        end)
+        
+        if success then
+            addLog("✓ delta.request call succeeded")
+            if result then
+                addLog("Result type: " .. type(result))
+                if type(result) == "table" then
+                    for k, v in pairs(result) do
+                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
+                    end
+                else
+                    addLog("Result: " .. tostring(result))
+                end
+            else
+                addLog("✗ delta.request returned nil")
+            end
+        else
+            addLog("✗ delta.request failed: " .. tostring(result))
+        end
+    end
+    
+    -- Test 2: delta.http.post
+    if delta and delta.http and delta.http.post then
+        addLog("\n--- Testing delta.http.post ---")
+        local success, result = pcall(function()
+            return delta.http.post(url, jsonBody, headers)
+        end)
+        
+        if success then
+            addLog("✓ delta.http.post call succeeded")
+            addLog("Result: " .. tostring(result))
+        else
+            addLog("✗ delta.http.post failed: " .. tostring(result))
+        end
+    end
+    
+    -- Test 3: _G.http_request
+    if _G.http_request then
+        addLog("\n--- Testing _G.http_request ---")
+        local success, result = pcall(function()
+            return _G.http_request({
+                Url = url,
+                Method = "POST",
+                Headers = headers,
+                Body = jsonBody
+            })
+        end)
+        
+        if success then
+            addLog("✓ _G.http_request call succeeded")
+            if result then
+                addLog("Result type: " .. type(result))
+                if type(result) == "table" then
+                    for k, v in pairs(result) do
+                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
+                    end
+                else
+                    addLog("Result: " .. tostring(result))
+                end
+            else
+                addLog("✗ _G.http_request returned nil")
+            end
+        else
+            addLog("✗ _G.http_request failed: " .. tostring(result))
+        end
+    end
+    
+    -- Test 4: syn.request
+    if syn and syn.request then
+        addLog("\n--- Testing syn.request ---")
+        local success, result = pcall(function()
+            return syn.request({
+                Url = url,
+                Method = "POST",
+                Headers = headers,
+                Body = jsonBody
+            })
+        end)
+        
+        if success then
+            addLog("✓ syn.request call succeeded")
+            if result then
+                addLog("Result type: " .. type(result))
+                if type(result) == "table" then
+                    for k, v in pairs(result) do
+                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
+                    end
+                else
+                    addLog("Result: " .. tostring(result))
+                end
+            else
+                addLog("✗ syn.request returned nil")
+            end
+        else
+            addLog("✗ syn.request failed: " .. tostring(result))
+        end
+    end
+    
+    -- Test 5: request
+    if request then
+        addLog("\n--- Testing request ---")
+        local success, result = pcall(function()
+            return request({
+                url = url,
+                method = "POST",
+                headers = headers,
+                body = jsonBody
+            })
+        end)
+        
+        if success then
+            addLog("✓ request call succeeded")
+            if result then
+                addLog("Result type: " .. type(result))
+                if type(result) == "table" then
+                    for k, v in pairs(result) do
+                        addLog("  " .. tostring(k) .. " = " .. tostring(v))
+                    end
+                else
+                    addLog("Result: " .. tostring(result))
+                end
+            else
+                addLog("✗ request returned nil")
+            end
+        else
+            addLog("✗ request failed: " .. tostring(result))
+        end
+    end
+    
+    -- Test 6: http.post
+    if http and http.post then
+        addLog("\n--- Testing http.post ---")
+        local success, result = pcall(function()
+            return http.post(url, jsonBody, headers)
+        end)
+        
+        if success then
+            addLog("✓ http.post call succeeded")
+            addLog("Result: " .. tostring(result))
+        else
+            addLog("✗ http.post failed: " .. tostring(result))
+        end
+    end
+    
+    addLog("\n=== Test Complete ===")
+end
+
+local testBtn = Instance.new("TextButton")
+testBtn.Size = UDim2.new(0, 180, 0, 35)
+testBtn.Position = UDim2.new(0.5, -195, 0, 220)
+testBtn.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
+testBtn.BorderSizePixel = 0
+testBtn.Text = "Test Webhook"
+testBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+testBtn.TextSize = 12
+testBtn.Font = Enum.Font.Gotham
+testBtn.Parent = f
+
+local detectBtn = Instance.new("TextButton")
+detectBtn.Size = UDim2.new(0, 180, 0, 35)
+detectBtn.Position = UDim2.new(0.5, 15, 0, 220)
+detectBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 200)
+detectBtn.BorderSizePixel = 0
+detectBtn.Text = "Detect HTTP Lib"
+detectBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+detectBtn.TextSize = 12
+detectBtn.Font = Enum.Font.Gotham
+detectBtn.Parent = f
+
+detectBtn.Activated:Connect(function()
+    detectHttpLib()
+end)
+
+testBtn.Activated:Connect(function()
+    local url = webhookInput.Text
+    url = string.gsub(url, "^%s*(.-)%s*$", "%1")
+    if url == "" then
+        addLog("ERROR: No webhook URL provided!")
+        return
+    end
+    testWebhook(url)
+end)
+
+-- Auto-detect on load
+task.wait(0.5)
+detectHttpLib()
