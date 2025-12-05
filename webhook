@@ -140,112 +140,92 @@ local function hookFireClient()
         remoteEvent.FireClient = newcclosure(function(self, ...)
             hookCount = hookCount + 1
             local args = {...}
-            addLog("\n[HOOK #" .. hookCount .. "] FireClient called!")
-            addLog("  Args count: " .. #args)
+            
+            -- Create a detailed string representation
+            local eventStr = "\n=== EVENT #" .. hookCount .. " ===\n"
+            eventStr = eventStr .. "Time: " .. os.date("%X") .. "\n"
+            eventStr = eventStr .. "Args count: " .. #args .. "\n\n"
+            
+            local function serializeValue(v, depth, maxDepth)
+                depth = depth or 0
+                maxDepth = maxDepth or 3
+                if depth > maxDepth then
+                    return "[Max Depth]"
+                end
+                
+                local vType = type(v)
+                if vType == "string" then
+                    return string.format("%q", v)
+                elseif vType == "number" or vType == "boolean" then
+                    return tostring(v)
+                elseif vType == "nil" then
+                    return "nil"
+                elseif vType == "table" then
+                    local parts = {"{"}
+                    local isArray = true
+                    local maxIndex = 0
+                    for k in pairs(v) do
+                        if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+                            isArray = false
+                            break
+                        end
+                        if k > maxIndex then maxIndex = k end
+                    end
+                    
+                    if isArray and maxIndex > 0 then
+                        for i = 1, maxIndex do
+                            table.insert(parts, serializeValue(v[i], depth + 1, maxDepth))
+                        end
+                    else
+                        for k, val in pairs(v) do
+                            local keyStr = type(k) == "string" and string.format("[%q]", k) or "[" .. tostring(k) .. "]"
+                            table.insert(parts, keyStr .. " = " .. serializeValue(val, depth + 1, maxDepth))
+                        end
+                    end
+                    table.insert(parts, "}")
+                    return table.concat(parts, "\n")
+                else
+                    return "[" .. vType .. "]"
+                end
+            end
             
             for i, arg in ipairs(args) do
                 local argType = type(arg)
-                addLog("  Arg[" .. i .. "]: " .. argType)
+                eventStr = eventStr .. "Arg[" .. i .. "] (type: " .. argType .. "):\n"
                 
                 if argType == "string" then
-                    addLog("    Value: " .. arg)
+                    eventStr = eventStr .. "  Value: " .. arg .. "\n"
                 elseif argType == "number" then
-                    addLog("    Value: " .. tostring(arg))
+                    eventStr = eventStr .. "  Value: " .. tostring(arg) .. "\n"
                 elseif argType == "table" then
-                    -- Count array elements
-                    local arrayCount = 0
-                    for _ in ipairs(arg) do
-                        arrayCount = arrayCount + 1
-                    end
-                    addLog("    Array elements: " .. arrayCount)
-                    
-                    -- Count all keys (including string keys)
-                    local keyCount = 0
-                    local keys = {}
-                    for k, v in pairs(arg) do
-                        keyCount = keyCount + 1
-                        table.insert(keys, tostring(k))
-                    end
-                    addLog("    Total keys: " .. keyCount)
-                    if keyCount > 0 and keyCount <= 10 then
-                        addLog("    Keys: " .. table.concat(keys, ", "))
-                    end
-                    
-                    -- Check for specific known keys
-                    if arg.Pets then
-                        addLog("    ✓ Has 'Pets' key!")
-                        if type(arg.Pets) == "table" then
-                            local petCount = 0
-                            for _ in pairs(arg.Pets) do
-                                petCount = petCount + 1
-                            end
-                            addLog("    Pets table size: " .. petCount)
-                            local petIndex = 0
-                            for k, petData in pairs(arg.Pets) do
-                                petIndex = petIndex + 1
-                                if petIndex <= 5 then
-                                    addLog("      Pet[" .. tostring(k) .. "]:")
-                                    if type(petData) == "table" then
-                                        if petData.Pet then
-                                            if petData.Pet.Name then
-                                                addLog("        Name: " .. petData.Pet.Name)
-                                            end
-                                            if petData.Pet.Shiny ~= nil then
-                                                addLog("        Shiny: " .. tostring(petData.Pet.Shiny))
-                                            end
-                                            if petData.Pet.Mythic ~= nil then
-                                                addLog("        Mythic: " .. tostring(petData.Pet.Mythic))
-                                            end
-                                        end
-                                        if petData.Deleted ~= nil then
-                                            addLog("        Deleted: " .. tostring(petData.Deleted))
-                                        end
-                                        if petData.New ~= nil then
-                                            addLog("        New: " .. tostring(petData.New))
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    
-                    if arg.Name then
-                        addLog("    ✓ Has 'Name' key: " .. tostring(arg.Name))
-                    end
-                    
-                    if arg.Speed then
-                        addLog("    ✓ Has 'Speed' key: " .. tostring(arg.Speed))
-                    end
-                    
-                    -- Show first few key-value pairs for debugging
-                    local shown = 0
-                    for k, v in pairs(arg) do
-                        if shown < 5 then
-                            local vType = type(v)
-                            local vStr = ""
-                            if vType == "string" then
-                                vStr = v
-                            elseif vType == "number" or vType == "boolean" then
-                                vStr = tostring(v)
-                            elseif vType == "table" then
-                                vStr = "[table]"
-                            else
-                                vStr = "[" .. vType .. "]"
-                            end
-                            if #vStr > 50 then
-                                vStr = string.sub(vStr, 1, 50) .. "..."
-                            end
-                            addLog("    " .. tostring(k) .. " = " .. vStr)
-                            shown = shown + 1
-                        end
-                    end
+                    eventStr = eventStr .. serializeValue(arg, 0, 3) .. "\n"
                 elseif argType == "Instance" then
                     if arg:IsA("Player") then
-                        addLog("    Player: " .. arg.Name)
+                        eventStr = eventStr .. "  Player: " .. arg.Name .. "\n"
                     else
-                        addLog("    Instance: " .. arg.ClassName)
+                        eventStr = eventStr .. "  Instance: " .. arg.ClassName .. "\n"
                     end
+                else
+                    eventStr = eventStr .. "  " .. tostring(arg) .. "\n"
                 end
+                eventStr = eventStr .. "\n"
+            end
+            
+            eventStr = eventStr .. "=== END EVENT ===\n"
+            
+            -- Print to console (for easy copying)
+            print(eventStr)
+            
+            -- Also add to log display (truncated)
+            local logLines = {}
+            for line in string.gmatch(eventStr, "([^\n]+)") do
+                table.insert(logLines, line)
+            end
+            for i = 1, math.min(20, #logLines) do
+                addLog(logLines[i])
+            end
+            if #logLines > 20 then
+                addLog("... (see console output for full details)")
             end
             
             -- Call original
