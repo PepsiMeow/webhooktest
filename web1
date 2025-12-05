@@ -412,16 +412,36 @@ local function hookFireClient()
                     local serialized = serializeValue(arg, 0, 6, "  ")
                     eventStr = eventStr .. serialized .. "\n"
                     
-                    -- Special handling for Pets table - try to access it directly
+                    -- Special handling for Pets table - try to access it directly using pairs
                     if arg.Pets then
                         eventStr = eventStr .. "  === PETS TABLE DETAILS ===\n"
                         if type(arg.Pets) == "table" then
+                            local petCount = 0
+                            -- Count pets first
+                            for _ in pairs(arg.Pets) do
+                                petCount = petCount + 1
+                            end
+                            eventStr = eventStr .. "  Pets count: " .. petCount .. "\n"
+                            
+                            -- Now iterate and show each pet
                             local petIndex = 0
                             for k, petData in pairs(arg.Pets) do
                                 petIndex = petIndex + 1
                                 eventStr = eventStr .. "  Pet[" .. tostring(k) .. "]:\n"
                                 if type(petData) == "table" then
-                                    eventStr = eventStr .. serializeValue(petData, 0, 6, "    ") .. "\n"
+                                    -- Show all keys in petData
+                                    for pk, pv in pairs(petData) do
+                                        eventStr = eventStr .. "    " .. tostring(pk) .. " = "
+                                        if type(pv) == "table" then
+                                            eventStr = eventStr .. "{\n"
+                                            for p2k, p2v in pairs(pv) do
+                                                eventStr = eventStr .. "      " .. tostring(p2k) .. " = " .. tostring(p2v) .. "\n"
+                                            end
+                                            eventStr = eventStr .. "    }\n"
+                                        else
+                                            eventStr = eventStr .. tostring(pv) .. "\n"
+                                        end
+                                    end
                                 else
                                     eventStr = eventStr .. "    Type: " .. type(petData) .. " = " .. tostring(petData) .. "\n"
                                 end
@@ -431,7 +451,7 @@ local function hookFireClient()
                                 end
                             end
                         else
-                            eventStr = eventStr .. "  Pets is not a table! Type: " .. type(arg.Pets) .. "\n"
+                            eventStr = eventStr .. "  Pets is not a table! Type: " .. type(arg.Pets) .. " = " .. tostring(arg.Pets) .. "\n"
                         end
                     end
                 elseif argType == "Instance" then
@@ -448,11 +468,15 @@ local function hookFireClient()
             
             eventStr = eventStr .. "=== END EVENT ===\n"
             
-            -- Store event for batching
-            table.insert(pendingEvents, {
+            -- Store event for batching - use explicit reference to global
+            local eventData = {
                 time = os.date("%X"),
                 data = eventStr
-            })
+            }
+            table.insert(pendingEvents, eventData)
+            
+            -- Debug: verify storage
+            addLog("DEBUG: Stored event #" .. hookCount .. ", pendingEvents count: " .. #pendingEvents)
             
             -- Update status
             if statusLabel then
@@ -632,26 +656,39 @@ end)
 
 sendBatchBtn.Activated:Connect(function()
     addLog("\n=== Manual Send Batch ===")
-    addLog("Checking pendingEvents...")
+    addLog("Hook count: " .. hookCount)
     addLog("pendingEvents type: " .. type(pendingEvents))
     addLog("pendingEvents count: " .. #pendingEvents)
     
-    -- Make sure we're using the global pendingEvents
-    local eventsToSend = {}
-    for i = 1, #pendingEvents do
-        table.insert(eventsToSend, pendingEvents[i])
+    -- Check if pendingEvents is actually the global one
+    if pendingEvents == nil then
+        addLog("ERROR: pendingEvents is nil!")
+        return
     end
+    
+    -- Make sure we're using the global pendingEvents - copy all events
+    local eventsToSend = {}
+    local count = 0
+    for i, event in ipairs(pendingEvents) do
+        count = count + 1
+        table.insert(eventsToSend, event)
+    end
+    
+    addLog("Copied " .. count .. " events to send")
     
     if #eventsToSend > 0 then
         addLog("Sending " .. #eventsToSend .. " events to webhook...")
         sendBatchWebhook(eventsToSend)
+        -- Clear pending events
         pendingEvents = {}
         if statusLabel then
             statusLabel.Text = "Events: " .. hookCount .. " | Pending: 0/" .. BATCH_SIZE .. " (Sent!)"
         end
+        addLog("Batch sent and cleared!")
     else
-        addLog("ERROR: No events found in pendingEvents!")
-        addLog("Hook count: " .. hookCount)
+        addLog("ERROR: No events to send!")
+        addLog("This might mean events aren't being stored properly.")
+        addLog("Try hatching an egg first, then check if pendingEvents updates.")
     end
 end)
 
@@ -659,21 +696,32 @@ closeBtn.Activated:Connect(function()
     addLog("Closing script...")
     -- Unhook if hooked
     if originalFireClient and remoteEvent then
-        remoteEvent.FireClient = originalFireClient
+        pcall(function()
+            remoteEvent.FireClient = originalFireClient
+        end)
         addLog("Unhooked FireClient")
     end
     -- Send any pending events before closing
     if #pendingEvents > 0 then
         addLog("Sending final batch before close...")
-        sendBatchWebhook(pendingEvents)
+        local finalBatch = {}
+        for i = 1, #pendingEvents do
+            table.insert(finalBatch, pendingEvents[i])
+        end
+        sendBatchWebhook(finalBatch)
+        task.wait(1) -- Wait for webhook to send
     end
     -- Close GUI
-    g:Destroy()
+    pcall(function()
+        g:Destroy()
+    end)
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = "Remote Hook Test",
         Text = "Script closed",
         Duration = 3
     })
+    -- Stop script execution
+    error("Script closed by user")
 end)
 
 -- Auto-find on load
