@@ -32,7 +32,8 @@ local returningToEgg = false
 
 -- Flight settings
 local flySpeed = 100 -- Studs per second
-local heightAboveRift = 3 -- How many studs above the rift to position player (reduced to be closer)
+local heightAboveRift = 15 -- Spawn 3 player heights above the rift (~5 studs per player height)
+local maxFlyDistance = 1000 -- Maximum distance to fly (teleport if farther to avoid physics errors)
 
 -- Available rifts (all possible rifts)
 local AVAILABLE_RIFTS = {
@@ -170,7 +171,7 @@ local function setCollision(enabled)
     end)
 end
 
--- Smooth fly to position
+-- Teleport or fly to position (teleport if too far to avoid physics errors)
 local function flyToPosition(targetPos, onArrival)
     local char = p.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then
@@ -181,76 +182,77 @@ local function flyToPosition(targetPos, onArrival)
     local hrp = char.HumanoidRootPart
     local startPos = hrp.Position
     local distance = (targetPos - startPos).Magnitude
-    local duration = distance / flySpeed
     
-    print("🚀 Flying to position... (Distance: " .. math.floor(distance) .. " studs, ETA: " .. math.floor(duration) .. "s)")
+    print("📍 Distance to destination: " .. math.floor(distance) .. " studs")
     
     -- Disable collision
     setCollision(false)
     
-    -- Create a BodyPosition to move the character
-    local bodyPos = Instance.new("BodyPosition")
-    bodyPos.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bodyPos.Position = targetPos
-    bodyPos.P = 10000
-    bodyPos.D = 500
-    bodyPos.Parent = hrp
-    
-    -- Create a BodyGyro to keep character upright
-    local bodyGyro = Instance.new("BodyGyro")
-    bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-    bodyGyro.CFrame = hrp.CFrame
-    bodyGyro.P = 10000
-    bodyGyro.Parent = hrp
-    
-    -- Wait until we arrive (with timeout)
-    local startTime = tick()
-    local timeout = duration * 2 + 10
-    
-    spawn(function()
-        while (hrp.Position - targetPos).Magnitude > 5 and (tick() - startTime) < timeout do
-            task.wait(0.1)
-        end
+    -- If distance is too far (different worlds), teleport directly to avoid physics errors
+    if distance > maxFlyDistance then
+        print("⚡ Distance > " .. maxFlyDistance .. " studs, teleporting directly...")
         
-        -- Clean up
-        bodyPos:Destroy()
-        bodyGyro:Destroy()
+        -- Teleport directly (no BodyPosition to avoid shapecast errors)
+        hrp.CFrame = CFrame.new(targetPos)
         
-        -- Lock position at destination for 1 second, then unlock
-        local anchorPos = Instance.new("BodyPosition")
-        anchorPos.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        anchorPos.Position = targetPos
-        anchorPos.P = 50000
-        anchorPos.D = 1000
-        anchorPos.Name = "RiftAnchor"
-        anchorPos.Parent = hrp
+        print("✓ Teleported to destination")
         
-        local anchorGyro = Instance.new("BodyGyro")
-        anchorGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-        anchorGyro.CFrame = CFrame.new(targetPos, targetPos + Vector3.new(0, 0, -1))
-        anchorGyro.P = 50000
-        anchorGyro.Name = "RiftAnchorGyro"
-        anchorGyro.Parent = hrp
+        -- Wait a moment for physics to settle
+        task.wait(0.1)
         
-        print("✓ Arrived at destination")
+        -- Re-enable collision and let player drop naturally
+        setCollision(true)
         
-        -- Remove anchor after 1 second to allow player movement
-        task.delay(1, function()
-            pcall(function()
-                if anchorPos and anchorPos.Parent then
-                    anchorPos:Destroy()
-                end
-                if anchorGyro and anchorGyro.Parent then
-                    anchorGyro:Destroy()
-                end
-            end)
-            print("✓ Position unlocked (player can move freely)")
-        end)
+        print("✓ Player will drop naturally to rift")
         
         if onArrival then
             onArrival()
         end
-    end)
+    else
+        -- Close enough to fly smoothly
+        local duration = distance / flySpeed
+        print("🚀 Flying to position... (ETA: " .. math.floor(duration) .. "s)")
+        
+        -- Create a BodyPosition to move the character
+        local bodyPos = Instance.new("BodyPosition")
+        bodyPos.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bodyPos.Position = targetPos
+        bodyPos.P = 10000
+        bodyPos.D = 500
+        bodyPos.Parent = hrp
+        
+        -- Create a BodyGyro to keep character upright
+        local bodyGyro = Instance.new("BodyGyro")
+        bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        bodyGyro.CFrame = hrp.CFrame
+        bodyGyro.P = 10000
+        bodyGyro.Parent = hrp
+        
+        -- Wait until we arrive (with timeout)
+        local startTime = tick()
+        local timeout = duration * 2 + 10
+        
+        spawn(function()
+            while (hrp.Position - targetPos).Magnitude > 5 and (tick() - startTime) < timeout do
+                task.wait(0.1)
+            end
+            
+            -- Clean up
+            bodyPos:Destroy()
+            bodyGyro:Destroy()
+            
+            print("✓ Arrived at destination")
+            
+            -- Re-enable collision and let player drop naturally
+            setCollision(true)
+            
+            print("✓ Player will drop naturally to rift")
+            
+            if onArrival then
+                onArrival()
+            end
+        end)
+    end
 end
 
 -- Start auto hatch
@@ -287,16 +289,15 @@ local function returnToEgg()
     returningToEgg = true
     print("🔙 Returning to egg...")
     
-    -- Remove any remaining anchors (shouldn't be any after 1s, but just in case)
+    -- Remove any physics objects (shouldn't be any, but just in case)
     pcall(function()
         local char = p.Character
         if char and char:FindFirstChild("HumanoidRootPart") then
             local hrp = char.HumanoidRootPart
-            if hrp:FindFirstChild("RiftAnchor") then
-                hrp.RiftAnchor:Destroy()
-            end
-            if hrp:FindFirstChild("RiftAnchorGyro") then
-                hrp.RiftAnchorGyro:Destroy()
+            for _, obj in ipairs(hrp:GetChildren()) do
+                if obj:IsA("BodyPosition") or obj:IsA("BodyGyro") then
+                    obj:Destroy()
+                end
             end
         end
     end)
@@ -682,13 +683,13 @@ local function cancelRiftOperation()
     
     print("🛑 Cancelling rift operation...")
     
-    -- Remove flight/anchor objects
+    -- Remove all physics objects
     pcall(function()
         local char = p.Character
         if char and char:FindFirstChild("HumanoidRootPart") then
             local hrp = char.HumanoidRootPart
             for _, obj in ipairs(hrp:GetChildren()) do
-                if obj:IsA("BodyPosition") or obj:IsA("BodyGyro") then
+                if obj:IsA("BodyPosition") or obj:IsA("BodyGyro") or obj:IsA("BodyVelocity") then
                     obj:Destroy()
                 end
             end
