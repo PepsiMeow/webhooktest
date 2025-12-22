@@ -1,452 +1,1147 @@
--- VERSION 6.0 - ONCLIENTEVENT APPROACH WITH PROPER STORAGE
--- Back to OnClientEvent but with fixed storage and table access
+-- RIFT AUTO FLY SCRIPT
+-- Automatically flies to rifts when they spawn, hatches for 10 minutes, then returns
+-- Version 1.0
 
 local P = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
+local VIM = game:GetService("VirtualInputManager")
+local HttpService = game:GetService("HttpService")
+local TextChatService = game:GetService("TextChatService")
+local RunService = game:GetService("RunService")
 local p = P.LocalPlayer
 
 print("========================================")
-print("REMOTE HOOK TEST - VERSION 6.0")
-print("OnClientEvent + Fixed Storage")
+print("RIFT AUTO FLY SCRIPT")
+print("Version: 1.0")
 print("========================================")
 
-game:GetService("StarterGui"):SetCore("SendNotification", {
-    Title = "Remote Hook Test v6.0",
-    Text = "OnClientEvent approach!",
-    Duration = 5
-})
+-- Settings
+local scriptActive = true
+local autoHatchEnabled = false
+local riftAutoFlyEnabled = false
+local webhookURL = ""
+local discordUserID = ""
+local selectedEgg = "None" -- Which egg the player is currently at
 
-wait(1)
+-- Rift state tracking
+local isAtRift = false
+local storedPosition = nil
+local storedCFrame = nil
+local riftStartTime = nil
+local riftDuration = 600 -- 10 minutes in seconds
+local currentRift = nil
+local flyingToRift = false
+local returningToEgg = false
 
--- Webhook
-local WEBHOOK = "https://discord.com/api/webhooks/1227328649322168391/2SdD38qqsMjyktorFtdOLO7p9yN_RK_VdVocfiuT-SxRVKX1t5dMEw3STYxfSWCz7IeQ"
+-- Chat and event correlation tracking
+local lastChatNotificationTime = nil
+local chatEventCorrelationWindow = 3 -- seconds to wait for rift spawn after chat notification
+local pendingRiftDetection = false
+local debugMode = true -- Set to true to enable verbose debugging
 
--- Try to get metamethod bypass functions
-local getrawmetatable = getrawmetatable or debug.getmetatable
-local setreadonly = setreadonly or function() end
-local newcclosure = newcclosure or function(f) return f end
+-- Flight settings
+local flySpeed = 100 -- Studs per second
+local heightAboveRift = 10 -- How many studs above the rift to position player
 
--- HTTP library for Delta Mobile
-local httpLib = nil
-if delta and delta.request then
-    httpLib = function(url, method, headers, body)
-        local res = delta.request({Url = url, Method = method, Headers = headers, Body = body})
-        return res.Success, res.Body, res.StatusCode
-    end
-elseif request then
-    httpLib = function(url, method, headers, body)
-        local res = request({Url = url, Method = method, Headers = headers, Body = body})
-        return res.Success or res.success, res.Body or res.body, res.StatusCode
-    end
-end
+-- Available eggs (Christmas Event)
+local AVAILABLE_EGGS = {
+    "None",
+    "Gingerbread Egg",
+    "Candycane Egg",
+    "Yuletide Egg",
+    "Northpole Egg",
+    "Aurora Egg",
+    "Festive Egg"
+}
 
--- Simple JSON encoder
-local function jsonEncode(t)
-    local parts = {}
-    for k, v in pairs(t) do
-        local key = string.format("%q", k)
-        local val = type(v) == "string" and string.format("%q", v) or tostring(v)
-        table.insert(parts, key .. ":" .. val)
-    end
-    return "{" .. table.concat(parts, ",") .. "}"
-end
+-- Settings file
+local SETTINGS_FILE = "rift_auto_fly_settings.json"
 
--- Create storage in a StringValue (alternative to _G)
-local storage = Instance.new("StringValue")
-storage.Name = "RH_Storage"
-storage.Parent = RS
-local eventCount = 0
-local storedEvents = ""
-
--- Simple GUI
-local g = Instance.new("ScreenGui")
-g.Name = "RemoteHookV5"
-g.Parent = p.PlayerGui
-
-local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 360, 0, 320)
-f.Position = UDim2.new(0.5, -180, 0.5, -160)
-f.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-f.Parent = g
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 35)
-title.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
-title.Text = "v6.0 - OnClientEvent"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.TextSize = 14
-title.Font = Enum.Font.GothamBold
-title.Parent = f
-
-local log = Instance.new("TextLabel")
-log.Size = UDim2.new(0, 340, 0, 180)
-log.Position = UDim2.new(0, 10, 0, 45)
-log.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-log.Text = "Ready..."
-log.TextColor3 = Color3.fromRGB(200, 255, 200)
-log.TextSize = 9
-log.Font = Enum.Font.Gotham
-log.TextWrapped = true
-log.TextXAlignment = Enum.TextXAlignment.Left
-log.TextYAlignment = Enum.TextYAlignment.Top
-log.Parent = f
-
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(0, 340, 0, 18)
-status.Position = UDim2.new(0, 10, 0, 230)
-status.BackgroundTransparency = 1
-status.Text = "Events: 0 | Stored: 0"
-status.TextColor3 = Color3.fromRGB(255, 255, 100)
-status.TextSize = 10
-status.Font = Enum.Font.GothamBold
-status.TextXAlignment = Enum.TextXAlignment.Left
-status.Parent = f
-
-local function addLog(txt)
-    local lines = {}
-    for line in string.gmatch(log.Text, "([^\n]+)") do
-        table.insert(lines, line)
-    end
-    table.insert(lines, txt)
-    while #lines > 12 do table.remove(lines, 1) end
-    log.Text = table.concat(lines, "\n")
-end
-
--- Buttons
-local hookBtn = Instance.new("TextButton")
-hookBtn.Size = UDim2.new(0, 105, 0, 26)
-hookBtn.Position = UDim2.new(0, 10, 0, 253)
-hookBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
-hookBtn.Text = "Hook Remote"
-hookBtn.TextSize = 10
-hookBtn.Font = Enum.Font.Gotham
-hookBtn.Parent = f
-
-local testBtn = Instance.new("TextButton")
-testBtn.Size = UDim2.new(0, 105, 0, 26)
-testBtn.Position = UDim2.new(0, 125, 0, 253)
-testBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 50)
-testBtn.Text = "Test Webhook"
-testBtn.TextSize = 10
-testBtn.Font = Enum.Font.Gotham
-testBtn.Parent = f
-
-local sendBtn = Instance.new("TextButton")
-sendBtn.Size = UDim2.new(0, 105, 0, 26)
-sendBtn.Position = UDim2.new(0, 245, 0, 253)
-sendBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-sendBtn.Text = "Send Events"
-sendBtn.TextSize = 10
-sendBtn.Font = Enum.Font.Gotham
-sendBtn.Parent = f
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 105, 0, 26)
-closeBtn.Position = UDim2.new(0, 127, 0, 285)
-closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-closeBtn.Text = "Close"
-closeBtn.TextSize = 10
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.Parent = f
-
--- Function to extract data from tables bypassing metatables
-local function extractTableData(tbl, depth)
-    depth = depth or 0
-    if depth > 3 then return "[deep]" end
-    if type(tbl) ~= "table" then return tostring(tbl) end
-    
-    local result = {}
-    
-    -- Try getrawmetatable to bypass __index
-    local success, mt = pcall(getrawmetatable, tbl)
-    if success and mt then
-        pcall(setreadonly, mt, false)
+-- Load settings
+local function loadSettings()
+    if not readfile or not isfile or not HttpService then
+        return
     end
     
-    -- Try numeric indices first
-    for i = 1, 20 do
-        local val = rawget(tbl, i)
-        if val ~= nil then
-            if type(val) == "table" then
-                result[i] = extractTableData(val, depth + 1)
-            else
-                result[i] = tostring(val)
-            end
-        else
-            break
-        end
-    end
-    
-    -- Try string keys
-    for k, v in pairs(tbl) do
-        if type(k) == "string" then
-            if type(v) == "table" then
-                result[k] = extractTableData(v, depth + 1)
-            else
-                result[k] = tostring(v)
-            end
-        end
-    end
-    
-    return result
-end
-
--- Hook the remote
-local remote = nil
-local original = nil
-local hooked = false
-
-local function findAndHookRemote()
-    if hooked then
-        addLog("Already hooked!")
-        return true
-    end
-    
-    addLog("Finding remote...")
-    local success, r = pcall(function()
-        return RS.Shared.Framework.Network.Remote.RemoteEvent
-    end)
-    
-    if not success or not r then
-        addLog("❌ Remote not found!")
-        addLog("Searching for any RemoteEvent...")
-        
-        -- Try to find ANY remote event
-        for _, obj in pairs(RS:GetDescendants()) do
-            if obj:IsA("RemoteEvent") then
-                addLog("Found: " .. obj:GetFullName())
-            end
-        end
-        return false
-    end
-    
-    remote = r
-    addLog("✓ Found: " .. remote.Name)
-    
-    return hookRemote()
-end
-
-local function hookRemote()
-    if not remote then
-        addLog("❌ No remote to hook!")
-        return false
-    end
-    
-    addLog("Connecting OnClientEvent...")
-    local hookSuccess, hookErr = pcall(function()
-        remote.OnClientEvent:Connect(function(...)
-            local args = {...}
-            eventCount = eventCount + 1
-            
-            -- IMMEDIATE visual feedback
-            status.Text = "Events: " .. eventCount .. " | JUST FIRED!"
-            status.TextColor3 = Color3.fromRGB(255, 100, 100)
-            
-            -- Build event string
-            local eventStr = "==Event#" .. eventCount .. "==\n"
-            eventStr = eventStr .. "Time: " .. os.date("%X") .. "\n"
-            eventStr = eventStr .. "Args: " .. #args .. "\n"
-            
-            -- Process each argument
-            for i, arg in ipairs(args) do
-                local argType = type(arg)
-                
-                if argType == "string" then
-                    eventStr = eventStr .. "EventName: " .. arg .. "\n"
-                    addLog("Event: " .. arg)
-                elseif argType == "number" then
-                    eventStr = eventStr .. "Number: " .. tostring(arg) .. "\n"
-                    addLog("Number: " .. arg)
-                elseif argType == "table" then
-                    -- Show basic table info
-                    local keyCount = 0
-                    local keys = {}
-                    for k in pairs(arg) do
-                        keyCount = keyCount + 1
-                        table.insert(keys, tostring(k))
+    local success, result = pcall(function()
+        if isfile(SETTINGS_FILE) then
+            local content = readfile(SETTINGS_FILE)
+            if content and content ~= "" then
+                local decoded = HttpService:JSONDecode(content)
+                if decoded and type(decoded) == "table" then
+                    if decoded.webhookURL and type(decoded.webhookURL) == "string" then
+                        webhookURL = decoded.webhookURL
                     end
-                    eventStr = eventStr .. "Table keys (" .. keyCount .. "): " .. table.concat(keys, ", ") .. "\n"
-                    
-                    -- Try direct property access
-                    local eggName = arg.Name
-                    local pets = arg.Pets
-                    local speed = arg.Speed
-                    
-                    if eggName then
-                        eventStr = eventStr .. "Egg: " .. tostring(eggName) .. "\n"
-                        addLog("Egg: " .. eggName)
+                    if decoded.discordUserID and type(decoded.discordUserID) == "string" then
+                        discordUserID = decoded.discordUserID
                     end
-                    
-                    if speed then
-                        eventStr = eventStr .. "Speed: " .. tostring(speed) .. "\n"
+                    if decoded.riftAutoFlyEnabled ~= nil then
+                        riftAutoFlyEnabled = decoded.riftAutoFlyEnabled
                     end
-                    
-                    -- Access Pets array - try multiple methods
-                    if pets then
-                        local petsType = type(pets)
-                        eventStr = eventStr .. "Pets type: " .. petsType .. "\n"
-                        
-                        if petsType == "table" then
-                            -- Count pets
-                            local petCount = 0
-                            for _ in pairs(pets) do
-                                petCount = petCount + 1
-                            end
-                            eventStr = eventStr .. "Pets count: " .. petCount .. "\n"
-                            
-                            -- Try numeric indices
-                            for petIndex = 1, 20 do
-                                local petData = pets[petIndex]
-                                if petData and type(petData) == "table" then
-                                    local pet = petData.Pet
-                                    if pet and type(pet) == "table" then
-                                        local petName = pet.Name
-                                        if petName then
-                                            eventStr = eventStr .. "  Pet" .. petIndex .. ": " .. tostring(petName)
-                                            addLog("  Pet: " .. petName)
-                                            if pet.Shiny then eventStr = eventStr .. " ✨" end
-                                            if pet.Mythic then eventStr = eventStr .. " 💎" end
-                                            eventStr = eventStr .. "\n"
-                                        end
-                                    end
-                                else
-                                    break
-                                end
-                            end
-                        else
-                            eventStr = eventStr .. "Pets: " .. tostring(pets) .. "\n"
-                        end
+                    if decoded.selectedEgg and type(decoded.selectedEgg) == "string" then
+                        selectedEgg = decoded.selectedEgg
                     end
+                    if decoded.flySpeed and type(decoded.flySpeed) == "number" then
+                        flySpeed = decoded.flySpeed
+                    end
+                    print("✓ Settings loaded")
+                    return true
                 end
             end
-            
-            eventStr = eventStr .. "\n"
-            
-            -- Store in StringValue
-            storedEvents = storedEvents .. eventStr
-            storage.Value = storedEvents
-            
-            -- Update status
-            task.spawn(function()
-                task.wait(0.2)
-                status.Text = "Events: " .. eventCount .. " | Chars: " .. #storedEvents
-                status.TextColor3 = Color3.fromRGB(100, 255, 100)
-            end)
-        end)
-        
-        hooked = true
-        addLog("✓ CONNECTED OnClientEvent!")
-        hookBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-        hookBtn.Text = "✓ Connected"
+        end
     end)
     
-    if not hookSuccess then
-        addLog("❌ Connection failed: " .. tostring(hookErr))
-        return false
+    if not success then
+        print("✗ Failed to load settings (using defaults)")
     end
-    
-    return true
 end
 
-hookBtn.Activated:Connect(function()
-    findAndHookRemote()
-end)
-
--- Test webhook
-testBtn.Activated:Connect(function()
-    if not httpLib then
-        addLog("❌ No HTTP library!")
+-- Save settings
+local function saveSettings()
+    if not writefile or not HttpService then
         return
     end
     
-    addLog("Sending test...")
-    local payload = {content = "🧪 Test from v5.0 - " .. os.date("%X")}
-    local json = jsonEncode(payload)
-    local headers = {["Content-Type"] = "application/json"}
-    
-    local success, _, status = httpLib(WEBHOOK, "POST", headers, json)
-    
-    if success and (status == 200 or status == 204) then
-        addLog("✓ Test sent!")
-    else
-        addLog("❌ Test failed: " .. tostring(status))
-    end
-end)
+    pcall(function()
+        local settings = {
+            webhookURL = webhookURL or "",
+            discordUserID = discordUserID or "",
+            riftAutoFlyEnabled = riftAutoFlyEnabled,
+            selectedEgg = selectedEgg,
+            flySpeed = flySpeed
+        }
+        local encoded = HttpService:JSONEncode(settings)
+        writefile(SETTINGS_FILE, encoded)
+    end)
+end
 
--- Send stored events
-sendBtn.Activated:Connect(function()
-    if not httpLib then
-        addLog("❌ No HTTP!")
-        return
-    end
-    
-    if storedEvents == "" or #storedEvents < 10 then
-        addLog("❌ No events stored!")
-        addLog("Event count: " .. eventCount)
-        addLog("Storage length: " .. #storedEvents)
-        return
-    end
-    
-    addLog("Sending " .. eventCount .. " events...")
-    
-    local content = "**Events: " .. eventCount .. "**\n```\n" .. storedEvents .. "\n```"
-    if #content > 1900 then
-        content = string.sub(content, 1, 1900) .. "...\n```"
-    end
-    
-    local payload = {content = content}
-    local json = jsonEncode(payload)
-    local headers = {["Content-Type"] = "application/json"}
-    
-    local success, _, st = httpLib(WEBHOOK, "POST", headers, json)
-    
-    if success and (st == 200 or st == 204) then
-        addLog("✓ Sent " .. eventCount .. " events!")
-        storedEvents = ""
-        storage.Value = ""
-        eventCount = 0
-        status.Text = "Events: 0 | Stored: 0"
-    else
-        addLog("❌ Send failed: " .. tostring(st))
-    end
-end)
-
--- Close
-closeBtn.Activated:Connect(function()
-    addLog("Closing...")
-    -- Send pending events first
-    if #storedEvents > 10 then
-        addLog("Sending final batch...")
-        local content = "**Final Batch**\n```\n" .. storedEvents .. "\n```"
-        if #content > 1900 then
-            content = string.sub(content, 1, 1900) .. "...\n```"
+-- HTTP library detection
+local httpLib = nil
+if request then
+    httpLib = function(url, method, headers, body)
+        local success, res, err = pcall(function()
+            return request({Url=url, Method=method, Headers=headers or {}, Body=body})
+        end)
+        if success and res then
+            local status = res.StatusCode or (res.Success and 200 or (res.success and 200 or 0))
+            local body = res.Body or res.body or ""
+            local ok = res.Success or res.success or status == 200 or status == 204
+            return ok, body, status
         end
-        local payload = {content = content}
-        local json = jsonEncode(payload)
-        httpLib(WEBHOOK, "POST", {["Content-Type"] = "application/json"}, json)
-        task.wait(1)
+        return false, err or "Request exception", 0
     end
-    g:Destroy()
-    if storage then storage:Destroy() end
-    error("Closed")
-end)
+end
 
-addLog("Ready! Click 'Hook Remote'")
-addLog("Then hatch eggs to test")
+-- Send webhook notification
+local function sendWebhook(message, shouldPing)
+    if not webhookURL or webhookURL == "" then
+        return
+    end
+    
+    if not httpLib then
+        print("✗ No HTTP library available for webhooks")
+        return
+    end
+    
+    local pingText = ""
+    if shouldPing and discordUserID ~= "" then
+        pingText = "<@" .. discordUserID .. "> "
+    end
+    
+    local payload = {
+        content = pingText .. message
+    }
+    
+    local jsonPayload = HttpService:JSONEncode(payload)
+    
+    local success, body, status = httpLib(webhookURL, "POST", {
+        ["Content-Type"] = "application/json"
+    }, jsonPayload)
+    
+    if success and status == 200 then
+        print("✓ Webhook sent: " .. message)
+    else
+        print("✗ Webhook failed: status=" .. tostring(status))
+    end
+end
 
--- Auto-hook after 2 seconds
-task.wait(2)
-addLog("Auto-hooking in 1 second...")
-task.wait(1)
-findAndHookRemote()
+-- Get egg position by name (placeholder - needs actual egg positions)
+local function getEggPosition(eggName)
+    -- Try to find egg in workspace
+    local success, position = pcall(function()
+        -- Look for eggs in workspace
+        if workspace:FindFirstChild("Eggs") then
+            local egg = workspace.Eggs:FindFirstChild(eggName)
+            if egg and egg:FindFirstChild("Prompt") then
+                return egg.Prompt.Position
+            end
+        end
+        
+        -- Alternative: look in Rendered folder
+        if workspace:FindFirstChild("Rendered") then
+            if workspace.Rendered:FindFirstChild("Eggs") then
+                local egg = workspace.Rendered.Eggs:FindFirstChild(eggName)
+                if egg and egg:FindFirstChild("Prompt") then
+                    return egg.Prompt.Position
+                end
+            end
+        end
+        
+        return nil
+    end)
+    
+    if success and position then
+        return position
+    end
+    
+    return nil
+end
 
--- Keep trying to hook if not successful
-spawn(function()
-    while not hooked do
-        task.wait(3)
-        if not hooked then
-            findAndHookRemote()
+-- Disable/Enable character collision
+local function setCollision(enabled)
+    pcall(function()
+        if p.Character then
+            for _, part in pairs(p.Character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = enabled
+                end
+            end
+        end
+    end)
+end
+
+-- Smooth fly to position
+local function flyToPosition(targetPos, onArrival)
+    local char = p.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then
+        print("✗ No character found")
+        return
+    end
+    
+    local hrp = char.HumanoidRootPart
+    local startPos = hrp.Position
+    local distance = (targetPos - startPos).Magnitude
+    local duration = distance / flySpeed
+    
+    print("🚀 Flying to position... (Distance: " .. math.floor(distance) .. " studs, ETA: " .. math.floor(duration) .. "s)")
+    
+    -- Disable collision
+    setCollision(false)
+    
+    -- Create a BodyPosition to move the character
+    local bodyPos = Instance.new("BodyPosition")
+    bodyPos.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bodyPos.Position = targetPos
+    bodyPos.P = 10000
+    bodyPos.D = 500
+    bodyPos.Parent = hrp
+    
+    -- Create a BodyGyro to keep character upright
+    local bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bodyGyro.CFrame = hrp.CFrame
+    bodyGyro.P = 10000
+    bodyGyro.Parent = hrp
+    
+    -- Wait until we arrive (with timeout)
+    local startTime = tick()
+    local timeout = duration * 2 + 10 -- Double the estimated time plus buffer
+    
+    spawn(function()
+        while (hrp.Position - targetPos).Magnitude > 5 and (tick() - startTime) < timeout do
+            task.wait(0.1)
+        end
+        
+        -- Clean up
+        bodyPos:Destroy()
+        bodyGyro:Destroy()
+        
+        -- Lock position at destination
+        local anchorPos = Instance.new("BodyPosition")
+        anchorPos.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        anchorPos.Position = targetPos
+        anchorPos.P = 50000
+        anchorPos.D = 1000
+        anchorPos.Name = "RiftAnchor"
+        anchorPos.Parent = hrp
+        
+        local anchorGyro = Instance.new("BodyGyro")
+        anchorGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        anchorGyro.CFrame = CFrame.new(targetPos, targetPos + Vector3.new(0, 0, -1))
+        anchorGyro.P = 50000
+        anchorGyro.Name = "RiftAnchorGyro"
+        anchorGyro.Parent = hrp
+        
+        print("✓ Arrived at destination")
+        
+        if onArrival then
+            onArrival()
+        end
+    end)
+end
+
+-- Start auto hatch
+local function startAutoHatch()
+    if autoHatchEnabled then
+        return -- Already running
+    end
+    
+    autoHatchEnabled = true
+    print("✓ Auto Hatch started")
+    
+    spawn(function()
+        while autoHatchEnabled and scriptActive do
+            VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.05)
+            VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            task.wait(0.35) -- 0.4s total interval
+        end
+    end)
+end
+
+-- Stop auto hatch
+local function stopAutoHatch()
+    if not autoHatchEnabled then
+        return -- Already stopped
+    end
+    
+    autoHatchEnabled = false
+    print("✓ Auto Hatch stopped")
+end
+
+-- Return to stored position
+local function returnToStoredPosition()
+    if not storedPosition then
+        print("✗ No stored position to return to")
+        return
+    end
+    
+    returningToEgg = true
+    print("🔙 Returning to previous position...")
+    
+    -- Stop auto hatch first
+    stopAutoHatch()
+    
+    -- Remove anchor
+    pcall(function()
+        local char = p.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local hrp = char.HumanoidRootPart
+            if hrp:FindFirstChild("RiftAnchor") then
+                hrp.RiftAnchor:Destroy()
+            end
+            if hrp:FindFirstChild("RiftAnchorGyro") then
+                hrp.RiftAnchorGyro:Destroy()
+            end
+        end
+    end)
+    
+    flyToPosition(storedPosition, function()
+        -- Re-enable collision
+        setCollision(true)
+        
+        -- Reset state
+        isAtRift = false
+        currentRift = nil
+        flyingToRift = false
+        returningToEgg = false
+        riftStartTime = nil
+        
+        print("✓ Returned to original position")
+        sendWebhook("Returned to egg after rift despawned", false)
+    end)
+end
+
+-- Handle rift spawn
+local function handleRiftSpawn(rift, fromChatCorrelation)
+    if not riftAutoFlyEnabled then
+        return
+    end
+    
+    if isAtRift or flyingToRift then
+        print("⚠ Already at a rift or flying to one, ignoring new rift")
+        return
+    end
+    
+    -- If we're using chat correlation, only proceed if we recently saw the chat notification
+    if fromChatCorrelation then
+        if not lastChatNotificationTime then
+            print("⚠ Rift spawned but no recent chat notification, ignoring")
+            return
+        end
+        
+        local timeSinceChat = tick() - lastChatNotificationTime
+        if timeSinceChat > chatEventCorrelationWindow then
+            print("⚠ Rift spawned but chat notification was too long ago (" .. math.floor(timeSinceChat) .. "s), ignoring")
+            return
+        end
+        
+        print("✓ Rift spawn correlated with chat notification (delay: " .. string.format("%.2f", timeSinceChat) .. "s)")
+        pendingRiftDetection = false
+    end
+    
+    -- Get rift position
+    local riftPos = nil
+    pcall(function()
+        if rift:IsA("Model") and rift:FindFirstChild("Chest") then
+            riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
+        elseif rift:FindFirstChild("PrimaryPart") then
+            riftPos = rift.PrimaryPart.Position + Vector3.new(0, heightAboveRift, 0)
+        elseif rift:IsA("BasePart") then
+            riftPos = rift.Position + Vector3.new(0, heightAboveRift, 0)
+        end
+    end)
+    
+    if not riftPos then
+        print("✗ Could not determine rift position")
+        return
+    end
+    
+    print("🎯 Rift detected at " .. tostring(riftPos))
+    sendWebhook("Rift detected! Flying to location...", true)
+    
+    -- Store current position
+    local char = p.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        storedPosition = char.HumanoidRootPart.Position
+        storedCFrame = char.HumanoidRootPart.CFrame
+        print("💾 Stored current position: " .. tostring(storedPosition))
+    else
+        print("✗ Could not store current position")
+        return
+    end
+    
+    -- Stop auto hatch if running
+    local wasAutoHatching = autoHatchEnabled
+    if wasAutoHatching then
+        stopAutoHatch()
+    end
+    
+    -- Set state
+    flyingToRift = true
+    currentRift = rift
+    
+    -- Fly to rift
+    flyToPosition(riftPos, function()
+        flyingToRift = false
+        isAtRift = true
+        riftStartTime = tick()
+        
+        print("✓ Arrived at rift, starting auto hatch for 10 minutes")
+        sendWebhook("Arrived at rift! Auto hatching for 10 minutes", false)
+        
+        -- Start auto hatch
+        startAutoHatch()
+        
+        -- Monitor rift duration
+        spawn(function()
+            local despawnTime = nil
+            
+            -- Try to get despawn time from rift attribute
+            pcall(function()
+                if currentRift then
+                    despawnTime = currentRift:GetAttribute("DespawnAt")
+                end
+            end)
+            
+            -- Wait for rift to despawn or 10 minutes
+            if despawnTime then
+                local timeToWait = despawnTime - workspace:GetServerTimeNow()
+                print("⏱ Rift will despawn in " .. math.floor(timeToWait) .. " seconds")
+                task.wait(math.min(timeToWait, riftDuration))
+            else
+                print("⏱ Waiting 10 minutes at rift")
+                task.wait(riftDuration)
+            end
+            
+            -- Check if we're still at the rift (user might have cancelled)
+            if isAtRift then
+                print("⏰ Rift time expired, returning to egg")
+                returnToStoredPosition()
+            end
+        end)
+    end)
+end
+
+-- Monitor workspace.Rendered.Rifts for new rifts
+local function setupRiftMonitoring()
+    local monitoredFolders = {}
+    
+    -- Function to set up monitoring on a folder
+    local function monitorFolder(folder, folderPath)
+        if monitoredFolders[folder] then
+            return -- Already monitoring this folder
+        end
+        
+        print("✓ Monitoring: " .. folderPath)
+        monitoredFolders[folder] = true
+        
+        -- Check existing rifts
+        for _, rift in ipairs(folder:GetChildren()) do
+            print("   Found existing rift: " .. rift.Name)
+        end
+        
+        -- Monitor for new rifts
+        folder.ChildAdded:Connect(function(rift)
+            print("🎄 NEW RIFT SPAWNED!")
+            print("   Location: " .. folderPath)
+            print("   Name: " .. rift.Name)
+            print("   Type: " .. rift.ClassName)
+            print("   Time: " .. os.date("%H:%M:%S"))
+            task.wait(1) -- Small delay to ensure rift is fully loaded
+            handleRiftSpawn(rift, true) -- Use chat correlation
+        end)
+    end
+    
+    -- Try multiple possible locations
+    local success = pcall(function()
+        -- Location 1: workspace.Rendered.Rifts (from old game files)
+        if workspace:FindFirstChild("Rendered") then
+            local rendered = workspace.Rendered
+            
+            local riftsFolder = rendered:FindFirstChild("Rifts")
+            if riftsFolder then
+                monitorFolder(riftsFolder, "workspace.Rendered.Rifts")
+            else
+                print("⚠ workspace.Rendered.Rifts not found yet, monitoring for it...")
+                -- Monitor for Rifts folder creation
+                rendered.ChildAdded:Connect(function(child)
+                    if child.Name == "Rifts" and not monitoredFolders[child] then
+                        print("✓ Rifts folder appeared!")
+                        monitorFolder(child, "workspace.Rendered.Rifts")
+                    end
+                end)
+            end
+        else
+            print("⚠ workspace.Rendered not found, monitoring for it...")
+            workspace.ChildAdded:Connect(function(child)
+                if child.Name == "Rendered" then
+                    print("✓ Rendered folder appeared!")
+                    task.wait(1)
+                    
+                    local riftsFolder = child:FindFirstChild("Rifts")
+                    if riftsFolder then
+                        monitorFolder(riftsFolder, "workspace.Rendered.Rifts")
+                    else
+                        child.ChildAdded:Connect(function(subchild)
+                            if subchild.Name == "Rifts" and not monitoredFolders[subchild] then
+                                monitorFolder(subchild, "workspace.Rendered.Rifts")
+                            end
+                        end)
+                    end
+                end
+            end)
+        end
+        
+        -- Location 2: workspace.Rifts (alternative)
+        if workspace:FindFirstChild("Rifts") then
+            monitorFolder(workspace.Rifts, "workspace.Rifts")
+        else
+            workspace.ChildAdded:Connect(function(child)
+                if child.Name == "Rifts" and not monitoredFolders[child] then
+                    print("✓ Found alternative rift location!")
+                    monitorFolder(child, "workspace.Rifts")
+                end
+            end)
+        end
+        
+        -- Location 3: workspace.Map.Rifts (another alternative)
+        if workspace:FindFirstChild("Map") then
+            local map = workspace.Map
+            if map:FindFirstChild("Rifts") then
+                monitorFolder(map.Rifts, "workspace.Map.Rifts")
+            else
+                map.ChildAdded:Connect(function(child)
+                    if child.Name == "Rifts" and not monitoredFolders[child] then
+                        print("✓ Found rifts in Map!")
+                        monitorFolder(child, "workspace.Map.Rifts")
+                    end
+                end)
+            end
+        end
+        
+        print("✓ Rift monitoring active (checking multiple locations)")
+    end)
+    
+    if not success then
+        print("✗ Failed to setup rift monitoring")
+    end
+end
+
+-- Chat monitoring for "Feeling jolly" (Christmas Chest Rifts)
+local function setupChatMonitoring()
+    -- Try TextChatService (new chat system)
+    local success1 = pcall(function()
+        if TextChatService and TextChatService.MessageReceived then
+            TextChatService.MessageReceived:Connect(function(message)
+                if not scriptActive or not riftAutoFlyEnabled then return end
+                
+                local text = message.Text or ""
+                if string.find(string.lower(text), "feeling jolly") then
+                    print("========================================")
+                    print("🎅 'FEELING JOLLY' DETECTED IN CHAT!")
+                    print("   Time: " .. os.date("%H:%M:%S"))
+                    print("   Timestamp: " .. string.format("%.3f", tick()))
+                    print("========================================")
+                    lastChatNotificationTime = tick()
+                    pendingRiftDetection = true
+                    
+                    -- Send webhook notification
+                    sendWebhook("Christmas Chest Rift notification detected! Waiting for rift spawn...", false)
+                    
+                    -- Debug: Monitor workspace for ANY new objects during correlation window
+                    if debugMode then
+                        print("🔍 DEBUG: Monitoring workspace for new objects...")
+                        local monitorStartTime = tick()
+                        
+                        -- Monitor workspace descendants
+                        local connection = workspace.DescendantAdded:Connect(function(descendant)
+                            local timeSinceChat = tick() - lastChatNotificationTime
+                            if timeSinceChat < chatEventCorrelationWindow then
+                                print("   🔍 New object added (" .. string.format("%.3f", timeSinceChat) .. "s after chat):")
+                                print("      Name: " .. descendant.Name)
+                                print("      Type: " .. descendant.ClassName)
+                                print("      Path: " .. descendant:GetFullName())
+                                
+                                -- Check if it might be a rift
+                                if string.find(string.lower(descendant.Name), "rift") or 
+                                   string.find(string.lower(descendant.Name), "chest") or
+                                   string.find(string.lower(descendant.Name), "christmas") then
+                                    print("      ⚠ POSSIBLE RIFT OBJECT!")
+                                end
+                            end
+                        end)
+                        
+                        -- Clean up monitoring after window
+                        task.delay(chatEventCorrelationWindow + 0.5, function()
+                            connection:Disconnect()
+                            print("🔍 DEBUG: Monitoring ended")
+                        end)
+                    end
+                    
+                    -- Set a timeout - if no rift spawns within the window, warn the user
+                    spawn(function()
+                        task.wait(chatEventCorrelationWindow + 1)
+                        if pendingRiftDetection then
+                            print("")
+                            print("⚠⚠⚠ NO RIFT DETECTED WITHIN " .. chatEventCorrelationWindow .. "s ⚠⚠⚠")
+                            print("   This might mean:")
+                            print("   1. Rift spawned in a different location/world")
+                            print("   2. Rift detection code needs adjustment")
+                            print("   3. workspace.Rendered.Rifts doesn't exist in this game version")
+                            print("   4. Check the debug output above for any suspicious objects")
+                            print("")
+                            print("   Please run 'rift_debug.lua' to help identify the issue!")
+                            print("========================================")
+                            pendingRiftDetection = false
+                        end
+                    end)
+                end
+            end)
+            print("✓ Chat monitoring active (TextChatService)")
+        end
+    end)
+    
+    -- Try legacy chat system as fallback
+    if not success1 then
+        local success2 = pcall(function()
+            local Players = game:GetService("Players")
+            local player = Players.LocalPlayer
+            
+            -- Monitor PlayerGui for chat
+            local playerGui = player:WaitForChild("PlayerGui", 5)
+            if playerGui then
+                -- Function to monitor chat element
+                local function monitorChatElement(child)
+                    if child:IsA("TextLabel") or child:IsA("TextBox") then
+                        child:GetPropertyChangedSignal("Text"):Connect(function()
+                            if not scriptActive or not riftAutoFlyEnabled then return end
+                            
+                            local text = child.Text or ""
+                            if string.find(string.lower(text), "feeling jolly") then
+                                print("========================================")
+                                print("🎅 'FEELING JOLLY' DETECTED IN CHAT!")
+                                print("   Time: " .. os.date("%H:%M:%S"))
+                                print("   Timestamp: " .. string.format("%.3f", tick()))
+                                print("========================================")
+                                lastChatNotificationTime = tick()
+                                pendingRiftDetection = true
+                                
+                                sendWebhook("Christmas Chest Rift notification detected! Waiting for rift spawn...", false)
+                                
+                                -- Debug: Monitor workspace for ANY new objects during correlation window
+                                if debugMode then
+                                    print("🔍 DEBUG: Monitoring workspace for new objects...")
+                                    
+                                    local connection = workspace.DescendantAdded:Connect(function(descendant)
+                                        local timeSinceChat = tick() - lastChatNotificationTime
+                                        if timeSinceChat < chatEventCorrelationWindow then
+                                            print("   🔍 New object added (" .. string.format("%.3f", timeSinceChat) .. "s after chat):")
+                                            print("      Name: " .. descendant.Name)
+                                            print("      Type: " .. descendant.ClassName)
+                                            print("      Path: " .. descendant:GetFullName())
+                                            
+                                            if string.find(string.lower(descendant.Name), "rift") or 
+                                               string.find(string.lower(descendant.Name), "chest") or
+                                               string.find(string.lower(descendant.Name), "christmas") then
+                                                print("      ⚠ POSSIBLE RIFT OBJECT!")
+                                            end
+                                        end
+                                    end)
+                                    
+                                    task.delay(chatEventCorrelationWindow + 0.5, function()
+                                        connection:Disconnect()
+                                        print("🔍 DEBUG: Monitoring ended")
+                                    end)
+                                end
+                                
+                                -- Set a timeout
+                                spawn(function()
+                                    task.wait(chatEventCorrelationWindow + 1)
+                                    if pendingRiftDetection then
+                                        print("")
+                                        print("⚠⚠⚠ NO RIFT DETECTED WITHIN " .. chatEventCorrelationWindow .. "s ⚠⚠⚠")
+                                        print("   Please run 'rift_debug.lua' to help identify the issue!")
+                                        print("========================================")
+                                        pendingRiftDetection = false
+                                    end
+                                end)
+                            end
+                        end)
+                    end
+                end
+                
+                -- Monitor existing and new chat elements
+                for _, descendant in ipairs(playerGui:GetDescendants()) do
+                    monitorChatElement(descendant)
+                end
+                
+                playerGui.DescendantAdded:Connect(monitorChatElement)
+                
+                print("✓ Chat monitoring active (Legacy)")
+            end
+        end)
+        
+        if not success2 then
+            print("✗ Failed to setup chat monitoring")
         end
     end
+end
+
+-- Cancel current rift operation
+local function cancelRiftOperation()
+    if not isAtRift and not flyingToRift and not returningToEgg then
+        print("⚠ No active rift operation to cancel")
+        return
+    end
+    
+    print("🛑 Cancelling rift operation...")
+    
+    -- Stop auto hatch
+    stopAutoHatch()
+    
+    -- Remove flight/anchor objects
+    pcall(function()
+        local char = p.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local hrp = char.HumanoidRootPart
+            for _, obj in ipairs(hrp:GetChildren()) do
+                if obj:IsA("BodyPosition") or obj:IsA("BodyGyro") then
+                    obj:Destroy()
+                end
+            end
+        end
+    end)
+    
+    -- Re-enable collision
+    setCollision(true)
+    
+    -- Reset state
+    isAtRift = false
+    currentRift = nil
+    flyingToRift = false
+    returningToEgg = false
+    riftStartTime = nil
+    storedPosition = nil
+    storedCFrame = nil
+    
+    print("✓ Rift operation cancelled")
+end
+
+-- Create GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "RiftAutoFlyGUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- Try to parent to CoreGui first, fallback to PlayerGui
+local parent = nil
+pcall(function()
+    parent = game:GetService("CoreGui")
 end)
+if not parent then
+    parent = p:WaitForChild("PlayerGui")
+end
+screenGui.Parent = parent
+
+-- Main frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 350, 0, 400)
+mainFrame.Position = UDim2.new(0.5, -175, 0.5, -200)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 2
+mainFrame.BorderColor3 = Color3.fromRGB(50, 200, 50)
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+-- Add rounded corners
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = mainFrame
+
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = titleBar
+
+-- Fix bottom corners of title bar
+local titleBottomFix = Instance.new("Frame")
+titleBottomFix.Size = UDim2.new(1, 0, 0, 8)
+titleBottomFix.Position = UDim2.new(0, 0, 1, -8)
+titleBottomFix.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+titleBottomFix.BorderSizePixel = 0
+titleBottomFix.Parent = titleBar
+
+-- Title text
+local titleText = Instance.new("TextLabel")
+titleText.Size = UDim2.new(1, -80, 1, 0)
+titleText.Position = UDim2.new(0, 10, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "RIFT AUTO FLY"
+titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleText.TextSize = 18
+titleText.Font = Enum.Font.GothamBold
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+titleText.Parent = titleBar
+
+-- Enable/Disable toggle button (top right)
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 60, 0, 28)
+toggleBtn.Position = UDim2.new(1, -70, 0, 6)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+toggleBtn.Text = "ON"
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.TextSize = 14
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Parent = titleBar
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 6)
+toggleCorner.Parent = toggleBtn
+
+-- Content area
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, -20, 1, -60)
+contentFrame.Position = UDim2.new(0, 10, 0, 50)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+-- Auto Hatch button
+local autoHatchBtn = Instance.new("TextButton")
+autoHatchBtn.Size = UDim2.new(1, 0, 0, 40)
+autoHatchBtn.Position = UDim2.new(0, 0, 0, 0)
+autoHatchBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+autoHatchBtn.Text = "Auto Hatch: OFF"
+autoHatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoHatchBtn.TextSize = 16
+autoHatchBtn.Font = Enum.Font.GothamBold
+autoHatchBtn.BorderSizePixel = 0
+autoHatchBtn.Parent = contentFrame
+
+local autoHatchCorner = Instance.new("UICorner")
+autoHatchCorner.CornerRadius = UDim.new(0, 6)
+autoHatchCorner.Parent = autoHatchBtn
+
+-- Rift Auto Fly button
+local riftFlyBtn = Instance.new("TextButton")
+riftFlyBtn.Size = UDim2.new(1, 0, 0, 40)
+riftFlyBtn.Position = UDim2.new(0, 0, 0, 50)
+riftFlyBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+riftFlyBtn.Text = "Rift Auto Fly: OFF"
+riftFlyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+riftFlyBtn.TextSize = 16
+riftFlyBtn.Font = Enum.Font.GothamBold
+riftFlyBtn.BorderSizePixel = 0
+riftFlyBtn.Parent = contentFrame
+
+local riftFlyCorner = Instance.new("UICorner")
+riftFlyCorner.CornerRadius = UDim.new(0, 6)
+riftFlyCorner.Parent = riftFlyBtn
+
+-- Egg selector dropdown
+local eggSelectorLabel = Instance.new("TextLabel")
+eggSelectorLabel.Size = UDim2.new(1, 0, 0, 25)
+eggSelectorLabel.Position = UDim2.new(0, 0, 0, 100)
+eggSelectorLabel.BackgroundTransparency = 1
+eggSelectorLabel.Text = "Select Your Current Egg:"
+eggSelectorLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+eggSelectorLabel.TextSize = 14
+eggSelectorLabel.Font = Enum.Font.Gotham
+eggSelectorLabel.TextXAlignment = Enum.TextXAlignment.Left
+eggSelectorLabel.Parent = contentFrame
+
+local eggSelectorBtn = Instance.new("TextButton")
+eggSelectorBtn.Size = UDim2.new(1, 0, 0, 35)
+eggSelectorBtn.Position = UDim2.new(0, 0, 0, 130)
+eggSelectorBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+eggSelectorBtn.Text = "🥚 " .. selectedEgg
+eggSelectorBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+eggSelectorBtn.TextSize = 14
+eggSelectorBtn.Font = Enum.Font.Gotham
+eggSelectorBtn.BorderSizePixel = 0
+eggSelectorBtn.Parent = contentFrame
+
+local eggSelectorCorner = Instance.new("UICorner")
+eggSelectorCorner.CornerRadius = UDim.new(0, 6)
+eggSelectorCorner.Parent = eggSelectorBtn
+
+-- Egg dropdown list (hidden by default)
+local eggDropdown = Instance.new("ScrollingFrame")
+eggDropdown.Size = UDim2.new(1, 0, 0, 150)
+eggDropdown.Position = UDim2.new(0, 0, 0, 170)
+eggDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+eggDropdown.BorderSizePixel = 1
+eggDropdown.BorderColor3 = Color3.fromRGB(100, 100, 100)
+eggDropdown.Visible = false
+eggDropdown.ScrollBarThickness = 6
+eggDropdown.Parent = contentFrame
+
+local eggDropdownCorner = Instance.new("UICorner")
+eggDropdownCorner.CornerRadius = UDim.new(0, 6)
+eggDropdownCorner.Parent = eggDropdown
+
+local eggListLayout = Instance.new("UIListLayout")
+eggListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+eggListLayout.Padding = UDim.new(0, 2)
+eggListLayout.Parent = eggDropdown
+
+-- Populate egg dropdown
+for i, eggName in ipairs(AVAILABLE_EGGS) do
+    local eggOption = Instance.new("TextButton")
+    eggOption.Size = UDim2.new(1, -10, 0, 30)
+    eggOption.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    eggOption.Text = eggName
+    eggOption.TextColor3 = Color3.fromRGB(255, 255, 255)
+    eggOption.TextSize = 12
+    eggOption.Font = Enum.Font.Gotham
+    eggOption.BorderSizePixel = 0
+    eggOption.Parent = eggDropdown
+    
+    local optionCorner = Instance.new("UICorner")
+    optionCorner.CornerRadius = UDim.new(0, 4)
+    optionCorner.Parent = eggOption
+    
+    eggOption.Activated:Connect(function()
+        selectedEgg = eggName
+        eggSelectorBtn.Text = "🥚 " .. selectedEgg
+        eggDropdown.Visible = false
+        saveSettings()
+        print("✓ Selected egg: " .. selectedEgg)
+    end)
+end
+
+-- Update canvas size for dropdown
+eggDropdown.CanvasSize = UDim2.new(0, 0, 0, #AVAILABLE_EGGS * 32)
+
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 80)
+statusLabel.Position = UDim2.new(0, 0, 1, -90)
+statusLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+statusLabel.Text = "Status: Idle"
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextWrapped = true
+statusLabel.BorderSizePixel = 0
+statusLabel.Parent = contentFrame
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 6)
+statusCorner.Parent = statusLabel
+
+-- Cancel button (only visible when at rift)
+local cancelBtn = Instance.new("TextButton")
+cancelBtn.Size = UDim2.new(1, 0, 0, 35)
+cancelBtn.Position = UDim2.new(0, 0, 1, -90)
+cancelBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+cancelBtn.Text = "🛑 Cancel Rift Operation"
+cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+cancelBtn.TextSize = 14
+cancelBtn.Font = Enum.Font.GothamBold
+cancelBtn.BorderSizePixel = 0
+cancelBtn.Visible = false
+cancelBtn.Parent = mainFrame
+
+local cancelCorner = Instance.new("UICorner")
+cancelCorner.CornerRadius = UDim.new(0, 6)
+cancelCorner.Parent = cancelBtn
+
+-- Webhook settings button
+local settingsBtn = Instance.new("TextButton")
+settingsBtn.Size = UDim2.new(1, 0, 0, 30)
+settingsBtn.Position = UDim2.new(0, 0, 1, -40)
+settingsBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+settingsBtn.Text = "⚙ Webhook Settings"
+settingsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+settingsBtn.TextSize = 12
+settingsBtn.Font = Enum.Font.Gotham
+settingsBtn.BorderSizePixel = 0
+settingsBtn.Parent = contentFrame
+
+local settingsCorner = Instance.new("UICorner")
+settingsCorner.CornerRadius = UDim.new(0, 6)
+settingsCorner.Parent = settingsBtn
+
+-- Update status display
+local function updateStatus()
+    spawn(function()
+        while scriptActive do
+            local statusText = "Status: "
+            if flyingToRift then
+                statusText = statusText .. "🚀 Flying to rift..."
+            elseif isAtRift then
+                local timeElapsed = math.floor(tick() - riftStartTime)
+                local timeRemaining = riftDuration - timeElapsed
+                statusText = statusText .. "🎯 At rift (" .. math.floor(timeRemaining / 60) .. "m " .. (timeRemaining % 60) .. "s left)"
+            elseif returningToEgg then
+                statusText = statusText .. "🔙 Returning to egg..."
+            else
+                statusText = statusText .. "⏳ Waiting for rift..."
+            end
+            
+            statusLabel.Text = statusText
+            
+            -- Show/hide cancel button
+            cancelBtn.Visible = (flyingToRift or isAtRift or returningToEgg)
+            
+            task.wait(1)
+        end
+    end)
+end
+
+-- Button handlers
+toggleBtn.Activated:Connect(function()
+    scriptActive = not scriptActive
+    
+    if scriptActive then
+        toggleBtn.Text = "ON"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        titleBar.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        titleBottomFix.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        mainFrame.BorderColor3 = Color3.fromRGB(50, 200, 50)
+    else
+        toggleBtn.Text = "OFF"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        titleBar.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        titleBottomFix.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        mainFrame.BorderColor3 = Color3.fromRGB(200, 50, 50)
+        
+        -- Cancel any active operations
+        cancelRiftOperation()
+    end
+end)
+
+autoHatchBtn.Activated:Connect(function()
+    if not scriptActive then return end
+    
+    if autoHatchEnabled then
+        stopAutoHatch()
+        autoHatchBtn.Text = "Auto Hatch: OFF"
+        autoHatchBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    else
+        startAutoHatch()
+        autoHatchBtn.Text = "Auto Hatch: ON"
+        autoHatchBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+    end
+end)
+
+riftFlyBtn.Activated:Connect(function()
+    if not scriptActive then return end
+    
+    riftAutoFlyEnabled = not riftAutoFlyEnabled
+    
+    if riftAutoFlyEnabled then
+        riftFlyBtn.Text = "Rift Auto Fly: ON"
+        riftFlyBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+    else
+        riftFlyBtn.Text = "Rift Auto Fly: OFF"
+        riftFlyBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        
+        -- Cancel any active operations
+        cancelRiftOperation()
+    end
+    
+    saveSettings()
+end)
+
+eggSelectorBtn.Activated:Connect(function()
+    eggDropdown.Visible = not eggDropdown.Visible
+end)
+
+cancelBtn.Activated:Connect(function()
+    cancelRiftOperation()
+end)
+
+-- Webhook settings dialog (simple prompt for now)
+settingsBtn.Activated:Connect(function()
+    if not scriptActive then return end
+    
+    -- This would ideally open a settings dialog
+    -- For now, we'll just print instructions
+    print("========================================")
+    print("WEBHOOK SETTINGS")
+    print("Edit the webhookURL and discordUserID")
+    print("variables at the top of the script,")
+    print("or use setclipboard to paste them in.")
+    print("========================================")
+    
+    -- If setclipboard is available, we could implement a paste function
+    if setclipboard then
+        print("Tip: Use setclipboard() to paste webhook URL")
+    end
+end)
+
+-- Initialize
+loadSettings()
+setupRiftMonitoring()
+setupChatMonitoring()
+updateStatus()
+
+-- Update GUI state on load
+if riftAutoFlyEnabled then
+    riftFlyBtn.Text = "Rift Auto Fly: ON"
+    riftFlyBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+end
+
+print("========================================")
+print("✓ Rift Auto Fly script loaded!")
+print("✓ GUI created and ready")
+print("========================================")
+print("Instructions:")
+print("1. Enable 'Rift Auto Fly' button")
+print("2. Select your current egg from dropdown")
+print("3. Wait for rift to spawn")
+print("4. Script will automatically fly to rift")
+print("5. After 10 minutes, returns to egg")
+print("========================================")
 
