@@ -28,21 +28,31 @@ local riftDuration = 600 -- 10 minutes in seconds
 local currentRift = nil
 local flyingToRift = false
 local returningToEgg = false
-local wasAutoHatchingBeforeFlight = false
 
 -- Flight settings
 local flySpeed = 100 -- Studs per second
 local heightAboveRift = 3 -- How many studs above the rift to position player (reduced to be closer)
 
--- Available rifts and eggs
+-- Available rifts (all possible rifts)
 local AVAILABLE_RIFTS = {
-    {name = "peppermint-chest", displayName = "🎄 Peppermint Chest"},
-    {name = "gingerbread-egg", displayName = "🍪 Gingerbread Egg"},
-    {name = "candycane-egg", displayName = "🍬 Candycane Egg"},
-    {name = "yuletide-egg", displayName = "🎅 Yuletide Egg"},
-    {name = "northpole-egg", displayName = "❄️ Northpole Egg"},
-    {name = "aurora-egg", displayName = "🌌 Aurora Egg"},
-    {name = "festive-egg", displayName = "🎁 Festive Egg"}
+    -- Chest Rifts
+    {name = "peppermint-chest", displayName = "Peppermint Chest", category = "Chest"},
+    
+    -- Egg Rifts
+    {name = "gingerbread-egg", displayName = "Gingerbread Egg", category = "Egg"},
+    {name = "candycane-egg", displayName = "Candycane Egg", category = "Egg"},
+    {name = "yuletide-egg", displayName = "Yuletide Egg", category = "Egg"},
+    {name = "northpole-egg", displayName = "Northpole Egg", category = "Egg"},
+    {name = "aurora-egg", displayName = "Aurora Egg", category = "Egg"},
+    {name = "festive-egg", displayName = "Festive Egg", category = "Egg"},
+    {name = "void-egg", displayName = "Void Egg", category = "Egg"},
+    {name = "neon-egg", displayName = "Neon Egg", category = "Egg"},
+    {name = "lunar-egg", displayName = "Lunar Egg", category = "Egg"},
+    {name = "spiked-egg", displayName = "Spiked Egg", category = "Egg"},
+    {name = "nightmare-egg", displayName = "Nightmare Egg", category = "Egg"},
+    {name = "hell-egg", displayName = "Hell Egg", category = "Egg"},
+    {name = "rainbow-egg", displayName = "Rainbow Egg", category = "Egg"},
+    -- Add more rifts here as they're discovered
 }
 
 local AVAILABLE_EGGS = {
@@ -262,9 +272,6 @@ local function returnToEgg()
     returningToEgg = true
     print("🔙 Returning to egg...")
     
-    -- Stop auto hatch first
-    stopAutoHatch()
-    
     -- Remove anchor
     pcall(function()
         local char = p.Character
@@ -313,11 +320,6 @@ local function returnToEgg()
         riftStartTime = nil
         
         print("✓ Returned to egg")
-        
-        -- Re-enable auto hatch if it was on before
-        if wasAutoHatchingBeforeFlight then
-            startAutoHatch()
-        end
     end)
 end
 
@@ -510,13 +512,6 @@ local function handleRiftSpawn(rift)
         return
     end
     
-    -- Store auto hatch state and stop it
-    wasAutoHatchingBeforeFlight = autoHatchEnabled
-    if autoHatchEnabled then
-        stopAutoHatch()
-        print("⏸ Auto Hatch disabled for flight")
-    end
-    
     -- Set state
     flyingToRift = true
     currentRift = rift
@@ -529,11 +524,8 @@ local function handleRiftSpawn(rift)
         
         print("========================================")
         print("✅ ARRIVED AT RIFT!")
-        print("   Starting auto hatch for 10 minutes")
+        print("   Waiting 10 minutes")
         print("========================================")
-        
-        -- Start auto hatch at rift
-        startAutoHatch()
         
         -- Monitor rift duration
         spawn(function()
@@ -659,9 +651,6 @@ local function cancelRiftOperation()
     
     print("🛑 Cancelling rift operation...")
     
-    -- Stop auto hatch
-    stopAutoHatch()
-    
     -- Remove flight/anchor objects
     pcall(function()
         local char = p.Character
@@ -685,11 +674,6 @@ local function cancelRiftOperation()
     returningToEgg = false
     riftStartTime = nil
     
-    -- Re-enable auto hatch if it was on before
-    if wasAutoHatchingBeforeFlight then
-        startAutoHatch()
-    end
-    
     print("✓ Rift operation cancelled")
 end
 
@@ -709,11 +693,11 @@ if not parent then
 end
 screenGui.Parent = parent
 
--- Main frame
+-- Main frame (more compact)
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 380, 0, 520)
-mainFrame.Position = UDim2.new(0.5, -190, 0.5, -260)
+mainFrame.Size = UDim2.new(0, 300, 0, 420)
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -210)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 2
 mainFrame.BorderColor3 = Color3.fromRGB(50, 200, 50)
@@ -749,7 +733,7 @@ titleText.Position = UDim2.new(0, 10, 0, 0)
 titleText.BackgroundTransparency = 1
 titleText.Text = "🎄 RIFT AUTO FLY"
 titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleText.TextSize = 18
+titleText.TextSize = 16
 titleText.Font = Enum.Font.GothamBold
 titleText.TextXAlignment = Enum.TextXAlignment.Left
 titleText.Parent = titleBar
@@ -762,58 +746,73 @@ contentFrame.BackgroundTransparency = 1
 contentFrame.ScrollBarThickness = 6
 contentFrame.Parent = mainFrame
 
--- Auto Hatch button
+-- Auto Hatch button (compact)
 local autoHatchBtn = Instance.new("TextButton")
-autoHatchBtn.Size = UDim2.new(1, 0, 0, 40)
+autoHatchBtn.Size = UDim2.new(1, 0, 0, 32)
 autoHatchBtn.Position = UDim2.new(0, 0, 0, 0)
 autoHatchBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 autoHatchBtn.Text = "Auto Hatch: OFF"
 autoHatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-autoHatchBtn.TextSize = 16
+autoHatchBtn.TextSize = 13
 autoHatchBtn.Font = Enum.Font.GothamBold
 autoHatchBtn.BorderSizePixel = 0
 autoHatchBtn.Parent = contentFrame
 
 local autoHatchCorner = Instance.new("UICorner")
-autoHatchCorner.CornerRadius = UDim.new(0, 6)
+autoHatchCorner.CornerRadius = UDim.new(0, 5)
 autoHatchCorner.Parent = autoHatchBtn
 
 -- Rift selection label
 local riftSelectionLabel = Instance.new("TextLabel")
-riftSelectionLabel.Size = UDim2.new(1, 0, 0, 30)
-riftSelectionLabel.Position = UDim2.new(0, 0, 0, 50)
+riftSelectionLabel.Size = UDim2.new(1, 0, 0, 25)
+riftSelectionLabel.Position = UDim2.new(0, 0, 0, 40)
 riftSelectionLabel.BackgroundTransparency = 1
 riftSelectionLabel.Text = "Select Rifts to Hunt:"
 riftSelectionLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-riftSelectionLabel.TextSize = 14
+riftSelectionLabel.TextSize = 12
 riftSelectionLabel.Font = Enum.Font.GothamBold
 riftSelectionLabel.TextXAlignment = Enum.TextXAlignment.Left
 riftSelectionLabel.Parent = contentFrame
 
--- Create rift checkboxes
+-- Rift checkboxes container (scrollable)
+local riftScrollFrame = Instance.new("ScrollingFrame")
+riftScrollFrame.Size = UDim2.new(1, 0, 0, 160)
+riftScrollFrame.Position = UDim2.new(0, 0, 0, 68)
+riftScrollFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+riftScrollFrame.BorderSizePixel = 1
+riftScrollFrame.BorderColor3 = Color3.fromRGB(50, 50, 50)
+riftScrollFrame.ScrollBarThickness = 4
+riftScrollFrame.Parent = contentFrame
+
+local riftScrollCorner = Instance.new("UICorner")
+riftScrollCorner.CornerRadius = UDim.new(0, 5)
+riftScrollCorner.Parent = riftScrollFrame
+
+local riftListLayout = Instance.new("UIListLayout")
+riftListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+riftListLayout.Padding = UDim.new(0, 3)
+riftListLayout.Parent = riftScrollFrame
+
+-- Create rift checkboxes (more compact)
 local riftCheckboxes = {}
 for i, rift in ipairs(AVAILABLE_RIFTS) do
-    local yPos = 80 + ((i - 1) * 40)
-    
     local checkbox = Instance.new("TextButton")
-    checkbox.Size = UDim2.new(1, 0, 0, 35)
-    checkbox.Position = UDim2.new(0, 0, 0, yPos)
+    checkbox.Size = UDim2.new(1, -8, 0, 28)
     checkbox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     checkbox.Text = "✓ " .. rift.displayName
     checkbox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    checkbox.TextSize = 13
+    checkbox.TextSize = 11
     checkbox.Font = Enum.Font.Gotham
     checkbox.TextXAlignment = Enum.TextXAlignment.Left
     checkbox.BorderSizePixel = 0
-    checkbox.Parent = contentFrame
+    checkbox.Parent = riftScrollFrame
     
-    -- Add padding
     local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 10)
+    padding.PaddingLeft = UDim.new(0, 8)
     padding.Parent = checkbox
     
     local checkboxCorner = Instance.new("UICorner")
-    checkboxCorner.CornerRadius = UDim.new(0, 6)
+    checkboxCorner.CornerRadius = UDim.new(0, 4)
     checkboxCorner.Parent = checkbox
     
     -- Update initial state
@@ -828,46 +827,49 @@ for i, rift in ipairs(AVAILABLE_RIFTS) do
     riftCheckboxes[rift.name] = checkbox
 end
 
--- Egg selector
+-- Update scroll frame canvas size
+riftScrollFrame.CanvasSize = UDim2.new(0, 0, 0, (#AVAILABLE_RIFTS * 31))
+
+-- Egg selector (compact)
 local eggSelectorLabel = Instance.new("TextLabel")
-eggSelectorLabel.Size = UDim2.new(1, 0, 0, 25)
-eggSelectorLabel.Position = UDim2.new(0, 0, 0, 370)
+eggSelectorLabel.Size = UDim2.new(1, 0, 0, 20)
+eggSelectorLabel.Position = UDim2.new(0, 0, 0, 235)
 eggSelectorLabel.BackgroundTransparency = 1
 eggSelectorLabel.Text = "Return to Egg:"
 eggSelectorLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-eggSelectorLabel.TextSize = 14
+eggSelectorLabel.TextSize = 12
 eggSelectorLabel.Font = Enum.Font.Gotham
 eggSelectorLabel.TextXAlignment = Enum.TextXAlignment.Left
 eggSelectorLabel.Parent = contentFrame
 
 local eggSelectorBtn = Instance.new("TextButton")
-eggSelectorBtn.Size = UDim2.new(1, 0, 0, 35)
-eggSelectorBtn.Position = UDim2.new(0, 0, 0, 400)
+eggSelectorBtn.Size = UDim2.new(1, 0, 0, 30)
+eggSelectorBtn.Position = UDim2.new(0, 0, 0, 258)
 eggSelectorBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 eggSelectorBtn.Text = "🥚 " .. selectedEgg
 eggSelectorBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-eggSelectorBtn.TextSize = 14
+eggSelectorBtn.TextSize = 12
 eggSelectorBtn.Font = Enum.Font.Gotham
 eggSelectorBtn.BorderSizePixel = 0
 eggSelectorBtn.Parent = contentFrame
 
 local eggSelectorCorner = Instance.new("UICorner")
-eggSelectorCorner.CornerRadius = UDim.new(0, 6)
+eggSelectorCorner.CornerRadius = UDim.new(0, 5)
 eggSelectorCorner.Parent = eggSelectorBtn
 
--- Egg dropdown list (hidden by default)
+-- Egg dropdown list (hidden, compact)
 local eggDropdown = Instance.new("ScrollingFrame")
-eggDropdown.Size = UDim2.new(1, 0, 0, 150)
-eggDropdown.Position = UDim2.new(0, 0, 0, 440)
+eggDropdown.Size = UDim2.new(1, 0, 0, 120)
+eggDropdown.Position = UDim2.new(0, 0, 0, 293)
 eggDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 eggDropdown.BorderSizePixel = 1
 eggDropdown.BorderColor3 = Color3.fromRGB(100, 100, 100)
 eggDropdown.Visible = false
-eggDropdown.ScrollBarThickness = 6
+eggDropdown.ScrollBarThickness = 4
 eggDropdown.Parent = contentFrame
 
 local eggDropdownCorner = Instance.new("UICorner")
-eggDropdownCorner.CornerRadius = UDim.new(0, 6)
+eggDropdownCorner.CornerRadius = UDim.new(0, 5)
 eggDropdownCorner.Parent = eggDropdown
 
 local eggListLayout = Instance.new("UIListLayout")
@@ -875,14 +877,14 @@ eggListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 eggListLayout.Padding = UDim.new(0, 2)
 eggListLayout.Parent = eggDropdown
 
--- Populate egg dropdown
+-- Populate egg dropdown (compact)
 for i, eggName in ipairs(AVAILABLE_EGGS) do
     local eggOption = Instance.new("TextButton")
-    eggOption.Size = UDim2.new(1, -10, 0, 30)
+    eggOption.Size = UDim2.new(1, -8, 0, 26)
     eggOption.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     eggOption.Text = eggName
     eggOption.TextColor3 = Color3.fromRGB(255, 255, 255)
-    eggOption.TextSize = 12
+    eggOption.TextSize = 11
     eggOption.Font = Enum.Font.Gotham
     eggOption.BorderSizePixel = 0
     eggOption.Parent = eggDropdown
@@ -900,43 +902,40 @@ for i, eggName in ipairs(AVAILABLE_EGGS) do
     end)
 end
 
-eggDropdown.CanvasSize = UDim2.new(0, 0, 0, #AVAILABLE_EGGS * 32)
+eggDropdown.CanvasSize = UDim2.new(0, 0, 0, #AVAILABLE_EGGS * 28)
 
--- Update canvas size for content frame
-contentFrame.CanvasSize = UDim2.new(0, 0, 0, 600)
-
--- Status label
+-- Status label (compact)
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -20, 0, 80)
-statusLabel.Position = UDim2.new(0, 10, 1, -90)
+statusLabel.Size = UDim2.new(1, -20, 0, 60)
+statusLabel.Position = UDim2.new(0, 10, 1, -70)
 statusLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 statusLabel.Text = "Status: Waiting for rifts..."
 statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusLabel.TextSize = 12
+statusLabel.TextSize = 10
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextWrapped = true
 statusLabel.BorderSizePixel = 0
 statusLabel.Parent = mainFrame
 
 local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 6)
+statusCorner.CornerRadius = UDim.new(0, 5)
 statusCorner.Parent = statusLabel
 
--- Cancel button (only visible when at rift)
+-- Cancel button (compact, only visible when at rift)
 local cancelBtn = Instance.new("TextButton")
-cancelBtn.Size = UDim2.new(1, -20, 0, 35)
-cancelBtn.Position = UDim2.new(0, 10, 1, -90)
+cancelBtn.Size = UDim2.new(1, -20, 0, 30)
+cancelBtn.Position = UDim2.new(0, 10, 1, -70)
 cancelBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-cancelBtn.Text = "🛑 Cancel Rift Operation"
+cancelBtn.Text = "🛑 Cancel"
 cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-cancelBtn.TextSize = 14
+cancelBtn.TextSize = 12
 cancelBtn.Font = Enum.Font.GothamBold
 cancelBtn.BorderSizePixel = 0
 cancelBtn.Visible = false
 cancelBtn.Parent = mainFrame
 
 local cancelCorner = Instance.new("UICorner")
-cancelCorner.CornerRadius = UDim.new(0, 6)
+cancelCorner.CornerRadius = UDim.new(0, 5)
 cancelCorner.Parent = cancelBtn
 
 -- Update status display
@@ -970,12 +969,6 @@ end
 -- Button handlers
 autoHatchBtn.Activated:Connect(function()
     if not scriptActive then return end
-    
-    -- Don't allow manual toggle during rift operations
-    if flyingToRift or returningToEgg then
-        print("⚠ Cannot toggle auto hatch during flight")
-        return
-    end
     
     if autoHatchEnabled then
         stopAutoHatch()
