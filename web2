@@ -335,22 +335,101 @@ local function handleRiftSpawn(rift)
         return
     end
     
+    -- Debug: Print rift structure
+    print("🔍 DEBUG - Rift Structure:")
+    print("   Name: " .. rift.Name)
+    print("   ClassName: " .. rift.ClassName)
+    print("   Children:")
+    pcall(function()
+        for _, child in ipairs(rift:GetChildren()) do
+            print("      - " .. child.Name .. " (" .. child.ClassName .. ")")
+            -- Print grandchildren for Models
+            if child:IsA("Model") or child:IsA("Folder") then
+                for _, grandchild in ipairs(child:GetChildren()) do
+                    print("         - " .. grandchild.Name .. " (" .. grandchild.ClassName .. ")")
+                end
+            end
+        end
+    end)
+    
+    -- Try to get PrimaryPart or PivotPosition
+    pcall(function()
+        if rift:IsA("Model") then
+            if rift.PrimaryPart then
+                print("   PrimaryPart: " .. rift.PrimaryPart.Name .. " at " .. tostring(rift.PrimaryPart.Position))
+            end
+            print("   PivotPosition: " .. tostring(rift:GetPivot().Position))
+        end
+    end)
+    
     -- Get rift position
     local riftPos = nil
     pcall(function()
+        -- Method 1: Try Model with PivotPosition (modern Roblox)
         if rift:IsA("Model") then
-            if rift:FindFirstChild("Chest") then
-                riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
-            elseif rift.PrimaryPart then
-                riftPos = rift.PrimaryPart.Position + Vector3.new(0, heightAboveRift, 0)
+            local pivot = rift:GetPivot()
+            if pivot then
+                riftPos = pivot.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using PivotPosition: " .. tostring(riftPos))
+                return
             end
-        elseif rift:IsA("BasePart") then
+        end
+        
+        -- Method 2: Try finding specific children
+        if rift:FindFirstChild("Chest") then
+            if rift.Chest:IsA("BasePart") then
+                riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Chest.Position: " .. tostring(riftPos))
+                return
+            elseif rift.Chest:FindFirstChild("Root") then
+                riftPos = rift.Chest.Root.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Chest.Root.Position: " .. tostring(riftPos))
+                return
+            end
+        end
+        
+        if rift:FindFirstChild("Root") then
+            riftPos = rift.Root.Position + Vector3.new(0, heightAboveRift, 0)
+            print("   ✓ Using Root.Position: " .. tostring(riftPos))
+            return
+        end
+        
+        if rift:FindFirstChild("Display") then
+            riftPos = rift.Display.Position + Vector3.new(0, heightAboveRift, 0)
+            print("   ✓ Using Display.Position: " .. tostring(riftPos))
+            return
+        end
+        
+        if rift:FindFirstChild("Prompt") then
+            if rift.Prompt:IsA("BasePart") then
+                riftPos = rift.Prompt.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Prompt.Position: " .. tostring(riftPos))
+                return
+            elseif rift.Prompt:IsA("Attachment") then
+                riftPos = rift.Prompt.WorldPosition + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Prompt.WorldPosition: " .. tostring(riftPos))
+                return
+            end
+        end
+        
+        -- Method 3: Try PrimaryPart
+        if rift:IsA("Model") and rift.PrimaryPart then
+            riftPos = rift.PrimaryPart.Position + Vector3.new(0, heightAboveRift, 0)
+            print("   ✓ Using PrimaryPart.Position: " .. tostring(riftPos))
+            return
+        end
+        
+        -- Method 4: If it's directly a BasePart
+        if rift:IsA("BasePart") then
             riftPos = rift.Position + Vector3.new(0, heightAboveRift, 0)
+            print("   ✓ Using direct Position: " .. tostring(riftPos))
+            return
         end
     end)
     
     if not riftPos then
         print("✗ Could not determine rift position")
+        print("   Please share the debug output above!")
         return
     end
     
