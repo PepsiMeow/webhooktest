@@ -18,6 +18,7 @@ print("========================================")
 local scriptActive = true
 local autoHatchEnabled = false
 local selectedEgg = "None" -- Which egg to return to
+local testMode = false -- Test mode: 30 second duration instead of full time
 
 -- Rift state tracking
 local isAtRift = false
@@ -52,6 +53,7 @@ local AVAILABLE_RIFTS = {
     {name = "nightmare-egg", displayName = "Nightmare Egg", category = "Egg"},
     {name = "hell-egg", displayName = "Hell Egg", category = "Egg"},
     {name = "rainbow-egg", displayName = "Rainbow Egg", category = "Egg"},
+    {name = "magma-egg", displayName = "Magma Egg", category = "Egg"}
     -- Add more rifts here as they're discovered
 }
 
@@ -214,7 +216,7 @@ local function flyToPosition(targetPos, onArrival)
         bodyPos:Destroy()
         bodyGyro:Destroy()
         
-        -- Lock position at destination
+        -- Lock position at destination for 1 second, then unlock
         local anchorPos = Instance.new("BodyPosition")
         anchorPos.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
         anchorPos.Position = targetPos
@@ -231,6 +233,19 @@ local function flyToPosition(targetPos, onArrival)
         anchorGyro.Parent = hrp
         
         print("✓ Arrived at destination")
+        
+        -- Remove anchor after 1 second to allow player movement
+        task.delay(1, function()
+            pcall(function()
+                if anchorPos and anchorPos.Parent then
+                    anchorPos:Destroy()
+                end
+                if anchorGyro and anchorGyro.Parent then
+                    anchorGyro:Destroy()
+                end
+            end)
+            print("✓ Position unlocked (player can move freely)")
+        end)
         
         if onArrival then
             onArrival()
@@ -272,7 +287,7 @@ local function returnToEgg()
     returningToEgg = true
     print("🔙 Returning to egg...")
     
-    -- Remove anchor
+    -- Remove any remaining anchors (shouldn't be any after 1s, but just in case)
     pcall(function()
         local char = p.Character
         if char and char:FindFirstChild("HumanoidRootPart") then
@@ -524,34 +539,50 @@ local function handleRiftSpawn(rift)
         
         print("========================================")
         print("✅ ARRIVED AT RIFT!")
-        print("   Waiting 10 minutes")
+        
+        -- Get rift duration from DespawnAt attribute (or use test mode)
+        local riftDespawnTime = nil
+        local actualDuration = riftDuration -- Default fallback
+        
+        if testMode then
+            actualDuration = 30 -- 30 seconds for testing
+            print("   Duration: 30s (TEST MODE)")
+        else
+            pcall(function()
+                if currentRift then
+                    riftDespawnTime = currentRift:GetAttribute("DespawnAt")
+                    if riftDespawnTime then
+                        local serverTime = workspace:GetServerTimeNow()
+                        actualDuration = math.max(0, riftDespawnTime - serverTime)
+                        local minutes = math.floor(actualDuration / 60)
+                        local seconds = math.floor(actualDuration % 60)
+                        print("   Duration: " .. minutes .. "m " .. seconds .. "s (from DespawnAt)")
+                    else
+                        print("   Duration: 10m (no DespawnAt attribute, using default)")
+                    end
+                end
+            end)
+        end
+        
         print("========================================")
         
         -- Monitor rift duration
         spawn(function()
-            local despawnTime = nil
+            print("⏱ Starting rift timer for " .. math.floor(actualDuration) .. " seconds")
             
-            -- Try to get despawn time from rift attribute
-            pcall(function()
-                if currentRift then
-                    despawnTime = currentRift:GetAttribute("DespawnAt")
-                end
-            end)
+            -- Wait for the actual duration
+            local startWait = tick()
+            task.wait(actualDuration)
+            local actualWait = tick() - startWait
             
-            -- Wait for rift to despawn or 10 minutes
-            if despawnTime then
-                local timeToWait = despawnTime - workspace:GetServerTimeNow()
-                print("⏱ Rift will despawn in " .. math.floor(timeToWait) .. " seconds")
-                task.wait(math.min(timeToWait, riftDuration))
-            else
-                print("⏱ Waiting 10 minutes at rift")
-                task.wait(riftDuration)
-            end
+            print("⏰ Rift duration expired (waited " .. math.floor(actualWait) .. "s)")
             
             -- Check if we're still at the rift (user might have cancelled)
-            if isAtRift then
-                print("⏰ Rift time expired, returning to egg")
+            if isAtRift and currentRift then
+                print("🔄 Initiating return to egg...")
                 returnToEgg()
+            else
+                print("⚠ Already left rift or operation cancelled")
             end
         end)
     end)
@@ -693,11 +724,11 @@ if not parent then
 end
 screenGui.Parent = parent
 
--- Main frame (more compact)
+-- Main frame (compact to fit on screen)
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 300, 0, 420)
-mainFrame.Position = UDim2.new(0.5, -150, 0.5, -210)
+mainFrame.Size = UDim2.new(0, 280, 0, 380)
+mainFrame.Position = UDim2.new(0.5, -140, 0.5, -190)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 2
 mainFrame.BorderColor3 = Color3.fromRGB(50, 200, 50)
@@ -709,83 +740,100 @@ local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = mainFrame
 
--- Title bar
+-- Title bar (compact)
 local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.Size = UDim2.new(1, 0, 0, 32)
 titleBar.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
 titleBar.BorderSizePixel = 0
 titleBar.Parent = mainFrame
 
 local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.CornerRadius = UDim.new(0, 6)
 titleCorner.Parent = titleBar
 
 local titleBottomFix = Instance.new("Frame")
-titleBottomFix.Size = UDim2.new(1, 0, 0, 8)
-titleBottomFix.Position = UDim2.new(0, 0, 1, -8)
+titleBottomFix.Size = UDim2.new(1, 0, 0, 6)
+titleBottomFix.Position = UDim2.new(0, 0, 1, -6)
 titleBottomFix.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
 titleBottomFix.BorderSizePixel = 0
 titleBottomFix.Parent = titleBar
 
 local titleText = Instance.new("TextLabel")
-titleText.Size = UDim2.new(1, -20, 1, 0)
-titleText.Position = UDim2.new(0, 10, 0, 0)
+titleText.Size = UDim2.new(1, -16, 1, 0)
+titleText.Position = UDim2.new(0, 8, 0, 0)
 titleText.BackgroundTransparency = 1
 titleText.Text = "🎄 RIFT AUTO FLY"
 titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleText.TextSize = 16
+titleText.TextSize = 14
 titleText.Font = Enum.Font.GothamBold
 titleText.TextXAlignment = Enum.TextXAlignment.Left
 titleText.Parent = titleBar
 
 -- Content area
 local contentFrame = Instance.new("ScrollingFrame")
-contentFrame.Size = UDim2.new(1, -20, 1, -60)
-contentFrame.Position = UDim2.new(0, 10, 0, 50)
+contentFrame.Size = UDim2.new(1, -16, 1, -90)
+contentFrame.Position = UDim2.new(0, 8, 0, 38)
 contentFrame.BackgroundTransparency = 1
-contentFrame.ScrollBarThickness = 6
+contentFrame.ScrollBarThickness = 4
+contentFrame.BorderSizePixel = 0
 contentFrame.Parent = mainFrame
 
--- Auto Hatch button (compact)
+-- Top buttons (Auto Hatch and Test Mode side by side)
 local autoHatchBtn = Instance.new("TextButton")
-autoHatchBtn.Size = UDim2.new(1, 0, 0, 32)
+autoHatchBtn.Size = UDim2.new(0.48, 0, 0, 28)
 autoHatchBtn.Position = UDim2.new(0, 0, 0, 0)
 autoHatchBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 autoHatchBtn.Text = "Auto Hatch: OFF"
 autoHatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-autoHatchBtn.TextSize = 13
+autoHatchBtn.TextSize = 11
 autoHatchBtn.Font = Enum.Font.GothamBold
 autoHatchBtn.BorderSizePixel = 0
 autoHatchBtn.Parent = contentFrame
 
 local autoHatchCorner = Instance.new("UICorner")
-autoHatchCorner.CornerRadius = UDim.new(0, 5)
+autoHatchCorner.CornerRadius = UDim.new(0, 4)
 autoHatchCorner.Parent = autoHatchBtn
+
+-- Test Mode button (30s duration)
+local testModeBtn = Instance.new("TextButton")
+testModeBtn.Size = UDim2.new(0.48, 0, 0, 28)
+testModeBtn.Position = UDim2.new(0.52, 0, 0, 0)
+testModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+testModeBtn.Text = "Test: OFF"
+testModeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+testModeBtn.TextSize = 11
+testModeBtn.Font = Enum.Font.GothamBold
+testModeBtn.BorderSizePixel = 0
+testModeBtn.Parent = contentFrame
+
+local testModeCorner = Instance.new("UICorner")
+testModeCorner.CornerRadius = UDim.new(0, 4)
+testModeCorner.Parent = testModeBtn
 
 -- Rift selection label
 local riftSelectionLabel = Instance.new("TextLabel")
-riftSelectionLabel.Size = UDim2.new(1, 0, 0, 25)
-riftSelectionLabel.Position = UDim2.new(0, 0, 0, 40)
+riftSelectionLabel.Size = UDim2.new(1, 0, 0, 20)
+riftSelectionLabel.Position = UDim2.new(0, 0, 0, 34)
 riftSelectionLabel.BackgroundTransparency = 1
-riftSelectionLabel.Text = "Select Rifts to Hunt:"
+riftSelectionLabel.Text = "Select Rifts:"
 riftSelectionLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-riftSelectionLabel.TextSize = 12
+riftSelectionLabel.TextSize = 11
 riftSelectionLabel.Font = Enum.Font.GothamBold
 riftSelectionLabel.TextXAlignment = Enum.TextXAlignment.Left
 riftSelectionLabel.Parent = contentFrame
 
 -- Rift checkboxes container (scrollable)
 local riftScrollFrame = Instance.new("ScrollingFrame")
-riftScrollFrame.Size = UDim2.new(1, 0, 0, 160)
-riftScrollFrame.Position = UDim2.new(0, 0, 0, 68)
+riftScrollFrame.Size = UDim2.new(1, 0, 0, 150)
+riftScrollFrame.Position = UDim2.new(0, 0, 0, 56)
 riftScrollFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 riftScrollFrame.BorderSizePixel = 1
 riftScrollFrame.BorderColor3 = Color3.fromRGB(50, 50, 50)
-riftScrollFrame.ScrollBarThickness = 4
+riftScrollFrame.ScrollBarThickness = 3
 riftScrollFrame.Parent = contentFrame
 
 local riftScrollCorner = Instance.new("UICorner")
-riftScrollCorner.CornerRadius = UDim.new(0, 5)
+riftScrollCorner.CornerRadius = UDim.new(0, 4)
 riftScrollCorner.Parent = riftScrollFrame
 
 local riftListLayout = Instance.new("UIListLayout")
@@ -793,26 +841,26 @@ riftListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 riftListLayout.Padding = UDim.new(0, 3)
 riftListLayout.Parent = riftScrollFrame
 
--- Create rift checkboxes (more compact)
+-- Create rift checkboxes (compact)
 local riftCheckboxes = {}
 for i, rift in ipairs(AVAILABLE_RIFTS) do
     local checkbox = Instance.new("TextButton")
-    checkbox.Size = UDim2.new(1, -8, 0, 28)
+    checkbox.Size = UDim2.new(1, -6, 0, 24)
     checkbox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     checkbox.Text = "✓ " .. rift.displayName
     checkbox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    checkbox.TextSize = 11
+    checkbox.TextSize = 10
     checkbox.Font = Enum.Font.Gotham
     checkbox.TextXAlignment = Enum.TextXAlignment.Left
     checkbox.BorderSizePixel = 0
     checkbox.Parent = riftScrollFrame
     
     local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 8)
+    padding.PaddingLeft = UDim.new(0, 6)
     padding.Parent = checkbox
     
     local checkboxCorner = Instance.new("UICorner")
-    checkboxCorner.CornerRadius = UDim.new(0, 4)
+    checkboxCorner.CornerRadius = UDim.new(0, 3)
     checkboxCorner.Parent = checkbox
     
     -- Update initial state
@@ -828,48 +876,48 @@ for i, rift in ipairs(AVAILABLE_RIFTS) do
 end
 
 -- Update scroll frame canvas size
-riftScrollFrame.CanvasSize = UDim2.new(0, 0, 0, (#AVAILABLE_RIFTS * 31))
+riftScrollFrame.CanvasSize = UDim2.new(0, 0, 0, (#AVAILABLE_RIFTS * 26))
 
 -- Egg selector (compact)
 local eggSelectorLabel = Instance.new("TextLabel")
-eggSelectorLabel.Size = UDim2.new(1, 0, 0, 20)
-eggSelectorLabel.Position = UDim2.new(0, 0, 0, 235)
+eggSelectorLabel.Size = UDim2.new(1, 0, 0, 18)
+eggSelectorLabel.Position = UDim2.new(0, 0, 0, 212)
 eggSelectorLabel.BackgroundTransparency = 1
 eggSelectorLabel.Text = "Return to Egg:"
 eggSelectorLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-eggSelectorLabel.TextSize = 12
+eggSelectorLabel.TextSize = 11
 eggSelectorLabel.Font = Enum.Font.Gotham
 eggSelectorLabel.TextXAlignment = Enum.TextXAlignment.Left
 eggSelectorLabel.Parent = contentFrame
 
 local eggSelectorBtn = Instance.new("TextButton")
-eggSelectorBtn.Size = UDim2.new(1, 0, 0, 30)
-eggSelectorBtn.Position = UDim2.new(0, 0, 0, 258)
+eggSelectorBtn.Size = UDim2.new(1, 0, 0, 26)
+eggSelectorBtn.Position = UDim2.new(0, 0, 0, 232)
 eggSelectorBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 eggSelectorBtn.Text = "🥚 " .. selectedEgg
 eggSelectorBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-eggSelectorBtn.TextSize = 12
+eggSelectorBtn.TextSize = 11
 eggSelectorBtn.Font = Enum.Font.Gotham
 eggSelectorBtn.BorderSizePixel = 0
 eggSelectorBtn.Parent = contentFrame
 
 local eggSelectorCorner = Instance.new("UICorner")
-eggSelectorCorner.CornerRadius = UDim.new(0, 5)
+eggSelectorCorner.CornerRadius = UDim.new(0, 4)
 eggSelectorCorner.Parent = eggSelectorBtn
 
 -- Egg dropdown list (hidden, compact)
 local eggDropdown = Instance.new("ScrollingFrame")
-eggDropdown.Size = UDim2.new(1, 0, 0, 120)
-eggDropdown.Position = UDim2.new(0, 0, 0, 293)
+eggDropdown.Size = UDim2.new(1, 0, 0, 100)
+eggDropdown.Position = UDim2.new(0, 0, 0, 263)
 eggDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 eggDropdown.BorderSizePixel = 1
 eggDropdown.BorderColor3 = Color3.fromRGB(100, 100, 100)
 eggDropdown.Visible = false
-eggDropdown.ScrollBarThickness = 4
+eggDropdown.ScrollBarThickness = 3
 eggDropdown.Parent = contentFrame
 
 local eggDropdownCorner = Instance.new("UICorner")
-eggDropdownCorner.CornerRadius = UDim.new(0, 5)
+eggDropdownCorner.CornerRadius = UDim.new(0, 4)
 eggDropdownCorner.Parent = eggDropdown
 
 local eggListLayout = Instance.new("UIListLayout")
@@ -880,17 +928,17 @@ eggListLayout.Parent = eggDropdown
 -- Populate egg dropdown (compact)
 for i, eggName in ipairs(AVAILABLE_EGGS) do
     local eggOption = Instance.new("TextButton")
-    eggOption.Size = UDim2.new(1, -8, 0, 26)
+    eggOption.Size = UDim2.new(1, -6, 0, 22)
     eggOption.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     eggOption.Text = eggName
     eggOption.TextColor3 = Color3.fromRGB(255, 255, 255)
-    eggOption.TextSize = 11
+    eggOption.TextSize = 10
     eggOption.Font = Enum.Font.Gotham
     eggOption.BorderSizePixel = 0
     eggOption.Parent = eggDropdown
     
     local optionCorner = Instance.new("UICorner")
-    optionCorner.CornerRadius = UDim.new(0, 4)
+    optionCorner.CornerRadius = UDim.new(0, 3)
     optionCorner.Parent = eggOption
     
     eggOption.Activated:Connect(function()
@@ -902,40 +950,40 @@ for i, eggName in ipairs(AVAILABLE_EGGS) do
     end)
 end
 
-eggDropdown.CanvasSize = UDim2.new(0, 0, 0, #AVAILABLE_EGGS * 28)
+eggDropdown.CanvasSize = UDim2.new(0, 0, 0, #AVAILABLE_EGGS * 24)
 
 -- Status label (compact)
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -20, 0, 60)
-statusLabel.Position = UDim2.new(0, 10, 1, -70)
+statusLabel.Size = UDim2.new(1, -16, 0, 48)
+statusLabel.Position = UDim2.new(0, 8, 1, -56)
 statusLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 statusLabel.Text = "Status: Waiting for rifts..."
 statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusLabel.TextSize = 10
+statusLabel.TextSize = 9
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextWrapped = true
 statusLabel.BorderSizePixel = 0
 statusLabel.Parent = mainFrame
 
 local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 5)
+statusCorner.CornerRadius = UDim.new(0, 4)
 statusCorner.Parent = statusLabel
 
 -- Cancel button (compact, only visible when at rift)
 local cancelBtn = Instance.new("TextButton")
-cancelBtn.Size = UDim2.new(1, -20, 0, 30)
-cancelBtn.Position = UDim2.new(0, 10, 1, -70)
+cancelBtn.Size = UDim2.new(1, -16, 0, 26)
+cancelBtn.Position = UDim2.new(0, 8, 1, -56)
 cancelBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
 cancelBtn.Text = "🛑 Cancel"
 cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-cancelBtn.TextSize = 12
+cancelBtn.TextSize = 11
 cancelBtn.Font = Enum.Font.GothamBold
 cancelBtn.BorderSizePixel = 0
 cancelBtn.Visible = false
 cancelBtn.Parent = mainFrame
 
 local cancelCorner = Instance.new("UICorner")
-cancelCorner.CornerRadius = UDim.new(0, 5)
+cancelCorner.CornerRadius = UDim.new(0, 4)
 cancelCorner.Parent = cancelBtn
 
 -- Update status display
@@ -946,9 +994,22 @@ local function updateStatus()
             if flyingToRift then
                 statusText = statusText .. "🚀 Flying to rift..."
             elseif isAtRift then
-                local timeElapsed = math.floor(tick() - riftStartTime)
-                local timeRemaining = riftDuration - timeElapsed
-                statusText = statusText .. "🎯 At rift (" .. math.floor(timeRemaining / 60) .. "m " .. (timeRemaining % 60) .. "s left)"
+                -- Calculate time remaining from DespawnAt attribute
+                local timeRemaining = riftDuration -- fallback
+                pcall(function()
+                    if currentRift then
+                        local despawnTime = currentRift:GetAttribute("DespawnAt")
+                        if despawnTime then
+                            local serverTime = workspace:GetServerTimeNow()
+                            timeRemaining = math.max(0, despawnTime - serverTime)
+                        else
+                            -- Fallback to calculated time
+                            local timeElapsed = math.floor(tick() - riftStartTime)
+                            timeRemaining = riftDuration - timeElapsed
+                        end
+                    end
+                end)
+                statusText = statusText .. "🎯 At rift (" .. math.floor(timeRemaining / 60) .. "m " .. math.floor(timeRemaining % 60) .. "s left)"
             elseif returningToEgg then
                 statusText = statusText .. "🔙 Returning to egg..."
             else
@@ -978,6 +1039,23 @@ autoHatchBtn.Activated:Connect(function()
         startAutoHatch()
         autoHatchBtn.Text = "Auto Hatch: ON"
         autoHatchBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+    end
+end)
+
+-- Test Mode toggle
+testModeBtn.Activated:Connect(function()
+    if not scriptActive then return end
+    
+    testMode = not testMode
+    
+    if testMode then
+        testModeBtn.Text = "Test: ON"
+        testModeBtn.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
+        print("⚠ TEST MODE: Rifts will last 30 seconds")
+    else
+        testModeBtn.Text = "Test: OFF"
+        testModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        print("✓ Normal mode: Using actual rift duration")
     end
 end)
 
