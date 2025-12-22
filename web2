@@ -32,7 +32,7 @@ local wasAutoHatchingBeforeFlight = false
 
 -- Flight settings
 local flySpeed = 100 -- Studs per second
-local heightAboveRift = 10 -- How many studs above the rift to position player
+local heightAboveRift = 3 -- How many studs above the rift to position player (reduced to be closer)
 
 -- Available rifts and eggs
 local AVAILABLE_RIFTS = {
@@ -371,50 +371,94 @@ local function handleRiftSpawn(rift)
         end
     end)
     
-    -- Get rift position
+    -- Get rift position (prioritize interactive objects over Display sign)
     local riftPos = nil
     pcall(function()
-        -- Method 1: Display (works for ALL rift types based on game code)
-        if rift:FindFirstChild("Display") then
-            if rift.Display:IsA("BasePart") then
-                riftPos = rift.Display.Position + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using Display.Position: " .. tostring(riftPos))
-                return
-            end
-        end
-        
-        -- Method 2: Chest (for Type="Chest")
+        -- Method 1: Chest (for Type="Chest") - Use Chest position, NOT Display
         if rift:FindFirstChild("Chest") then
-            if rift.Chest:IsA("BasePart") then
-                riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
+            local chestObj = rift.Chest
+            
+            -- Try to find the Prompt's parent part (the actual chest)
+            if chestObj:FindFirstChild("Prompt") then
+                local prompt = chestObj.Prompt
+                if prompt.Parent and prompt.Parent:IsA("BasePart") then
+                    riftPos = prompt.Parent.Position + Vector3.new(0, heightAboveRift, 0)
+                    print("   ✓ Using Chest (via Prompt.Parent): " .. tostring(riftPos))
+                    return
+                end
+            end
+            
+            -- Fallback: Use Chest itself if it's a BasePart
+            if chestObj:IsA("BasePart") then
+                riftPos = chestObj.Position + Vector3.new(0, heightAboveRift, 0)
                 print("   ✓ Using Chest.Position: " .. tostring(riftPos))
                 return
-            elseif rift.Chest:FindFirstChild("Prompt") and rift.Chest.Prompt:IsA("BasePart") then
-                riftPos = rift.Chest.Prompt.Position + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using Chest.Prompt.Position: " .. tostring(riftPos))
-                return
+            end
+            
+            -- Fallback: Use Chest's PrimaryPart or first child part
+            for _, child in ipairs(chestObj:GetChildren()) do
+                if child:IsA("BasePart") and child.Name ~= "Display" then
+                    riftPos = child.Position + Vector3.new(0, heightAboveRift, 0)
+                    print("   ✓ Using Chest child part: " .. child.Name)
+                    return
+                end
             end
         end
         
-        -- Method 3: Gift (for Type="Gift")
+        -- Method 2: Gift (for Type="Gift")
         if rift:FindFirstChild("Gift") then
-            if rift.Gift:IsA("BasePart") then
-                riftPos = rift.Gift.Position + Vector3.new(0, heightAboveRift, 0)
+            local giftObj = rift.Gift
+            
+            -- Try to find the Prompt's parent part
+            if giftObj:FindFirstChild("Prompt") then
+                local prompt = giftObj.Prompt
+                if prompt.Parent and prompt.Parent:IsA("BasePart") then
+                    riftPos = prompt.Parent.Position + Vector3.new(0, heightAboveRift, 0)
+                    print("   ✓ Using Gift (via Prompt.Parent): " .. tostring(riftPos))
+                    return
+                end
+            end
+            
+            if giftObj:IsA("BasePart") then
+                riftPos = giftObj.Position + Vector3.new(0, heightAboveRift, 0)
                 print("   ✓ Using Gift.Position: " .. tostring(riftPos))
                 return
-            elseif rift.Gift:FindFirstChild("Prompt") and rift.Gift.Prompt:IsA("BasePart") then
-                riftPos = rift.Gift.Prompt.Position + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using Gift.Prompt.Position: " .. tostring(riftPos))
-                return
             end
         end
         
-        -- Method 4: Model PivotPosition (modern Roblox)
+        -- Method 3: For Type="Egg", look for egg-like objects (not Display)
+        if riftType == "Egg" then
+            -- Try to find a part that's likely the egg (not Display, not decorations)
+            for _, child in ipairs(rift:GetChildren()) do
+                if child:IsA("BasePart") and child.Name ~= "Display" then
+                    -- Prefer parts with "Egg" in the name or central parts
+                    if string.find(string.lower(child.Name), "egg") or 
+                       string.find(string.lower(child.Name), "root") or
+                       string.find(string.lower(child.Name), "prompt") then
+                        riftPos = child.Position + Vector3.new(0, heightAboveRift, 0)
+                        print("   ✓ Using Egg part: " .. child.Name)
+                        return
+                    end
+                end
+            end
+            
+            -- Fallback: Use PivotPosition for egg rifts (center of the model)
+            if rift:IsA("Model") then
+                local pivot = rift:GetPivot()
+                if pivot then
+                    riftPos = pivot.Position + Vector3.new(0, heightAboveRift, 0)
+                    print("   ✓ Using Egg PivotPosition (center): " .. tostring(riftPos))
+                    return
+                end
+            end
+        end
+        
+        -- Method 4: Model PivotPosition (center of model - better than Display)
         if rift:IsA("Model") then
             local pivot = rift:GetPivot()
             if pivot then
                 riftPos = pivot.Position + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using PivotPosition: " .. tostring(riftPos))
+                print("   ✓ Using PivotPosition (model center): " .. tostring(riftPos))
                 return
             end
         end
@@ -426,7 +470,16 @@ local function handleRiftSpawn(rift)
             return
         end
         
-        -- Method 6: Direct BasePart
+        -- Method 6: Display (LAST resort - this is just the sign)
+        if rift:FindFirstChild("Display") then
+            if rift.Display:IsA("BasePart") then
+                riftPos = rift.Display.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ⚠ Using Display.Position (sign - may not be ideal): " .. tostring(riftPos))
+                return
+            end
+        end
+        
+        -- Method 7: Direct BasePart
         if rift:IsA("BasePart") then
             riftPos = rift.Position + Vector3.new(0, heightAboveRift, 0)
             print("   ✓ Using direct Position: " .. tostring(riftPos))
