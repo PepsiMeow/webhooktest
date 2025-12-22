@@ -362,10 +362,54 @@ local function handleRiftSpawn(rift)
         end
     end)
     
+    -- Get rift type
+    local riftType = nil
+    pcall(function()
+        riftType = rift:GetAttribute("Type")
+        if riftType then
+            print("   Type attribute: " .. riftType)
+        end
+    end)
+    
     -- Get rift position
     local riftPos = nil
     pcall(function()
-        -- Method 1: Try Model with PivotPosition (modern Roblox)
+        -- Method 1: Display (works for ALL rift types based on game code)
+        if rift:FindFirstChild("Display") then
+            if rift.Display:IsA("BasePart") then
+                riftPos = rift.Display.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Display.Position: " .. tostring(riftPos))
+                return
+            end
+        end
+        
+        -- Method 2: Chest (for Type="Chest")
+        if rift:FindFirstChild("Chest") then
+            if rift.Chest:IsA("BasePart") then
+                riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Chest.Position: " .. tostring(riftPos))
+                return
+            elseif rift.Chest:FindFirstChild("Prompt") and rift.Chest.Prompt:IsA("BasePart") then
+                riftPos = rift.Chest.Prompt.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Chest.Prompt.Position: " .. tostring(riftPos))
+                return
+            end
+        end
+        
+        -- Method 3: Gift (for Type="Gift")
+        if rift:FindFirstChild("Gift") then
+            if rift.Gift:IsA("BasePart") then
+                riftPos = rift.Gift.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Gift.Position: " .. tostring(riftPos))
+                return
+            elseif rift.Gift:FindFirstChild("Prompt") and rift.Gift.Prompt:IsA("BasePart") then
+                riftPos = rift.Gift.Prompt.Position + Vector3.new(0, heightAboveRift, 0)
+                print("   ✓ Using Gift.Prompt.Position: " .. tostring(riftPos))
+                return
+            end
+        end
+        
+        -- Method 4: Model PivotPosition (modern Roblox)
         if rift:IsA("Model") then
             local pivot = rift:GetPivot()
             if pivot then
@@ -375,51 +419,14 @@ local function handleRiftSpawn(rift)
             end
         end
         
-        -- Method 2: Try finding specific children
-        if rift:FindFirstChild("Chest") then
-            if rift.Chest:IsA("BasePart") then
-                riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using Chest.Position: " .. tostring(riftPos))
-                return
-            elseif rift.Chest:FindFirstChild("Root") then
-                riftPos = rift.Chest.Root.Position + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using Chest.Root.Position: " .. tostring(riftPos))
-                return
-            end
-        end
-        
-        if rift:FindFirstChild("Root") then
-            riftPos = rift.Root.Position + Vector3.new(0, heightAboveRift, 0)
-            print("   ✓ Using Root.Position: " .. tostring(riftPos))
-            return
-        end
-        
-        if rift:FindFirstChild("Display") then
-            riftPos = rift.Display.Position + Vector3.new(0, heightAboveRift, 0)
-            print("   ✓ Using Display.Position: " .. tostring(riftPos))
-            return
-        end
-        
-        if rift:FindFirstChild("Prompt") then
-            if rift.Prompt:IsA("BasePart") then
-                riftPos = rift.Prompt.Position + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using Prompt.Position: " .. tostring(riftPos))
-                return
-            elseif rift.Prompt:IsA("Attachment") then
-                riftPos = rift.Prompt.WorldPosition + Vector3.new(0, heightAboveRift, 0)
-                print("   ✓ Using Prompt.WorldPosition: " .. tostring(riftPos))
-                return
-            end
-        end
-        
-        -- Method 3: Try PrimaryPart
+        -- Method 5: PrimaryPart
         if rift:IsA("Model") and rift.PrimaryPart then
             riftPos = rift.PrimaryPart.Position + Vector3.new(0, heightAboveRift, 0)
             print("   ✓ Using PrimaryPart.Position: " .. tostring(riftPos))
             return
         end
         
-        -- Method 4: If it's directly a BasePart
+        -- Method 6: Direct BasePart
         if rift:IsA("BasePart") then
             riftPos = rift.Position + Vector3.new(0, heightAboveRift, 0)
             print("   ✓ Using direct Position: " .. tostring(riftPos))
