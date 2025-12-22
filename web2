@@ -1,27 +1,23 @@
--- RIFT AUTO FLY SCRIPT
--- Automatically flies to rifts when they spawn, hatches for 10 minutes, then returns
--- Version 1.0
+-- RIFT AUTO FLY SCRIPT V2
+-- Automatically flies to selected rifts when they spawn
+-- Version 2.0 - Simplified
 
 local P = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local VIM = game:GetService("VirtualInputManager")
 local HttpService = game:GetService("HttpService")
-local TextChatService = game:GetService("TextChatService")
 local RunService = game:GetService("RunService")
 local p = P.LocalPlayer
 
 print("========================================")
-print("RIFT AUTO FLY SCRIPT")
-print("Version: 1.0")
+print("RIFT AUTO FLY SCRIPT V2")
+print("Version: 2.0")
 print("========================================")
 
 -- Settings
 local scriptActive = true
 local autoHatchEnabled = false
-local riftAutoFlyEnabled = false
-local webhookURL = ""
-local discordUserID = ""
-local selectedEgg = "None" -- Which egg the player is currently at
+local selectedEgg = "None" -- Which egg to return to
 
 -- Rift state tracking
 local isAtRift = false
@@ -32,18 +28,23 @@ local riftDuration = 600 -- 10 minutes in seconds
 local currentRift = nil
 local flyingToRift = false
 local returningToEgg = false
-
--- Chat and event correlation tracking
-local lastChatNotificationTime = nil
-local chatEventCorrelationWindow = 3 -- seconds to wait for rift spawn after chat notification
-local pendingRiftDetection = false
-local debugMode = true -- Set to true to enable verbose debugging
+local wasAutoHatchingBeforeFlight = false
 
 -- Flight settings
 local flySpeed = 100 -- Studs per second
 local heightAboveRift = 10 -- How many studs above the rift to position player
 
--- Available eggs (Christmas Event)
+-- Available rifts and eggs
+local AVAILABLE_RIFTS = {
+    {name = "peppermint-chest", displayName = "🎄 Peppermint Chest"},
+    {name = "gingerbread-egg", displayName = "🍪 Gingerbread Egg"},
+    {name = "candycane-egg", displayName = "🍬 Candycane Egg"},
+    {name = "yuletide-egg", displayName = "🎅 Yuletide Egg"},
+    {name = "northpole-egg", displayName = "❄️ Northpole Egg"},
+    {name = "aurora-egg", displayName = "🌌 Aurora Egg"},
+    {name = "festive-egg", displayName = "🎁 Festive Egg"}
+}
+
 local AVAILABLE_EGGS = {
     "None",
     "Gingerbread Egg",
@@ -54,8 +55,14 @@ local AVAILABLE_EGGS = {
     "Festive Egg"
 }
 
+-- Rift selection state (which rifts to hunt)
+local riftSelections = {}
+for _, rift in ipairs(AVAILABLE_RIFTS) do
+    riftSelections[rift.name] = true -- All enabled by default
+end
+
 -- Settings file
-local SETTINGS_FILE = "rift_auto_fly_settings.json"
+local SETTINGS_FILE = "rift_auto_fly_v2_settings.json"
 
 -- Load settings
 local function loadSettings()
@@ -63,23 +70,17 @@ local function loadSettings()
         return
     end
     
-    local success, result = pcall(function()
+    local success = pcall(function()
         if isfile(SETTINGS_FILE) then
             local content = readfile(SETTINGS_FILE)
             if content and content ~= "" then
                 local decoded = HttpService:JSONDecode(content)
                 if decoded and type(decoded) == "table" then
-                    if decoded.webhookURL and type(decoded.webhookURL) == "string" then
-                        webhookURL = decoded.webhookURL
-                    end
-                    if decoded.discordUserID and type(decoded.discordUserID) == "string" then
-                        discordUserID = decoded.discordUserID
-                    end
-                    if decoded.riftAutoFlyEnabled ~= nil then
-                        riftAutoFlyEnabled = decoded.riftAutoFlyEnabled
-                    end
                     if decoded.selectedEgg and type(decoded.selectedEgg) == "string" then
                         selectedEgg = decoded.selectedEgg
+                    end
+                    if decoded.riftSelections and type(decoded.riftSelections) == "table" then
+                        riftSelections = decoded.riftSelections
                     end
                     if decoded.flySpeed and type(decoded.flySpeed) == "number" then
                         flySpeed = decoded.flySpeed
@@ -92,7 +93,7 @@ local function loadSettings()
     end)
     
     if not success then
-        print("✗ Failed to load settings (using defaults)")
+        print("⚠ Using default settings")
     end
 end
 
@@ -104,10 +105,8 @@ local function saveSettings()
     
     pcall(function()
         local settings = {
-            webhookURL = webhookURL or "",
-            discordUserID = discordUserID or "",
-            riftAutoFlyEnabled = riftAutoFlyEnabled,
             selectedEgg = selectedEgg,
+            riftSelections = riftSelections,
             flySpeed = flySpeed
         }
         local encoded = HttpService:JSONEncode(settings)
@@ -115,59 +114,8 @@ local function saveSettings()
     end)
 end
 
--- HTTP library detection
-local httpLib = nil
-if request then
-    httpLib = function(url, method, headers, body)
-        local success, res, err = pcall(function()
-            return request({Url=url, Method=method, Headers=headers or {}, Body=body})
-        end)
-        if success and res then
-            local status = res.StatusCode or (res.Success and 200 or (res.success and 200 or 0))
-            local body = res.Body or res.body or ""
-            local ok = res.Success or res.success or status == 200 or status == 204
-            return ok, body, status
-        end
-        return false, err or "Request exception", 0
-    end
-end
-
--- Send webhook notification
-local function sendWebhook(message, shouldPing)
-    if not webhookURL or webhookURL == "" then
-        return
-    end
-    
-    if not httpLib then
-        print("✗ No HTTP library available for webhooks")
-        return
-    end
-    
-    local pingText = ""
-    if shouldPing and discordUserID ~= "" then
-        pingText = "<@" .. discordUserID .. "> "
-    end
-    
-    local payload = {
-        content = pingText .. message
-    }
-    
-    local jsonPayload = HttpService:JSONEncode(payload)
-    
-    local success, body, status = httpLib(webhookURL, "POST", {
-        ["Content-Type"] = "application/json"
-    }, jsonPayload)
-    
-    if success and status == 200 then
-        print("✓ Webhook sent: " .. message)
-    else
-        print("✗ Webhook failed: status=" .. tostring(status))
-    end
-end
-
--- Get egg position by name (placeholder - needs actual egg positions)
+-- Get egg position by name
 local function getEggPosition(eggName)
-    -- Try to find egg in workspace
     local success, position = pcall(function()
         -- Look for eggs in workspace
         if workspace:FindFirstChild("Eggs") then
@@ -178,12 +126,12 @@ local function getEggPosition(eggName)
         end
         
         -- Alternative: look in Rendered folder
-        if workspace:FindFirstChild("Rendered") then
-            if workspace.Rendered:FindFirstChild("Eggs") then
-                local egg = workspace.Rendered.Eggs:FindFirstChild(eggName)
-                if egg and egg:FindFirstChild("Prompt") then
-                    return egg.Prompt.Position
-                end
+        if workspace:FindFirstChild("Rendered") and workspace.Rendered:FindFirstChild("Eggs") then
+            local egg = workspace.Rendered.Eggs:FindFirstChild(eggName)
+            if egg and egg:FindFirstChild("Prompt") then
+                return egg.Prompt.Position
+            elseif egg and egg:FindFirstChild("Root") then
+                return egg.Root.Position
             end
         end
         
@@ -245,7 +193,7 @@ local function flyToPosition(targetPos, onArrival)
     
     -- Wait until we arrive (with timeout)
     local startTime = tick()
-    local timeout = duration * 2 + 10 -- Double the estimated time plus buffer
+    local timeout = duration * 2 + 10
     
     spawn(function()
         while (hrp.Position - targetPos).Magnitude > 5 and (tick() - startTime) < timeout do
@@ -309,15 +257,10 @@ local function stopAutoHatch()
     print("✓ Auto Hatch stopped")
 end
 
--- Return to stored position
-local function returnToStoredPosition()
-    if not storedPosition then
-        print("✗ No stored position to return to")
-        return
-    end
-    
+-- Return to stored position or selected egg
+local function returnToEgg()
     returningToEgg = true
-    print("🔙 Returning to previous position...")
+    print("🔙 Returning to egg...")
     
     -- Stop auto hatch first
     stopAutoHatch()
@@ -336,7 +279,29 @@ local function returnToStoredPosition()
         end
     end)
     
-    flyToPosition(storedPosition, function()
+    -- Determine where to return
+    local returnPos = storedPosition
+    
+    -- If user selected a specific egg, try to get its position
+    if selectedEgg ~= "None" then
+        local eggPos = getEggPosition(selectedEgg)
+        if eggPos then
+            print("📍 Returning to selected egg: " .. selectedEgg)
+            returnPos = eggPos
+        end
+    end
+    
+    if not returnPos then
+        print("✗ No return position available")
+        setCollision(true)
+        isAtRift = false
+        currentRift = nil
+        flyingToRift = false
+        returningToEgg = false
+        return
+    end
+    
+    flyToPosition(returnPos, function()
         -- Re-enable collision
         setCollision(true)
         
@@ -347,46 +312,38 @@ local function returnToStoredPosition()
         returningToEgg = false
         riftStartTime = nil
         
-        print("✓ Returned to original position")
-        sendWebhook("Returned to egg after rift despawned", false)
+        print("✓ Returned to egg")
+        
+        -- Re-enable auto hatch if it was on before
+        if wasAutoHatchingBeforeFlight then
+            startAutoHatch()
+        end
     end)
 end
 
 -- Handle rift spawn
-local function handleRiftSpawn(rift, fromChatCorrelation)
-    if not riftAutoFlyEnabled then
+local function handleRiftSpawn(rift)
+    if isAtRift or flyingToRift or returningToEgg then
+        print("⚠ Already at a rift, ignoring: " .. rift.Name)
         return
     end
     
-    if isAtRift or flyingToRift then
-        print("⚠ Already at a rift or flying to one, ignoring new rift")
+    -- Check if this rift is selected
+    local riftName = string.lower(rift.Name)
+    if not riftSelections[riftName] then
+        print("⏭ Rift not selected, ignoring: " .. rift.Name)
         return
-    end
-    
-    -- If we're using chat correlation, only proceed if we recently saw the chat notification
-    if fromChatCorrelation then
-        if not lastChatNotificationTime then
-            print("⚠ Rift spawned but no recent chat notification, ignoring")
-            return
-        end
-        
-        local timeSinceChat = tick() - lastChatNotificationTime
-        if timeSinceChat > chatEventCorrelationWindow then
-            print("⚠ Rift spawned but chat notification was too long ago (" .. math.floor(timeSinceChat) .. "s), ignoring")
-            return
-        end
-        
-        print("✓ Rift spawn correlated with chat notification (delay: " .. string.format("%.2f", timeSinceChat) .. "s)")
-        pendingRiftDetection = false
     end
     
     -- Get rift position
     local riftPos = nil
     pcall(function()
-        if rift:IsA("Model") and rift:FindFirstChild("Chest") then
-            riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
-        elseif rift:FindFirstChild("PrimaryPart") then
-            riftPos = rift.PrimaryPart.Position + Vector3.new(0, heightAboveRift, 0)
+        if rift:IsA("Model") then
+            if rift:FindFirstChild("Chest") then
+                riftPos = rift.Chest.Position + Vector3.new(0, heightAboveRift, 0)
+            elseif rift.PrimaryPart then
+                riftPos = rift.PrimaryPart.Position + Vector3.new(0, heightAboveRift, 0)
+            end
         elseif rift:IsA("BasePart") then
             riftPos = rift.Position + Vector3.new(0, heightAboveRift, 0)
         end
@@ -397,8 +354,11 @@ local function handleRiftSpawn(rift, fromChatCorrelation)
         return
     end
     
-    print("🎯 Rift detected at " .. tostring(riftPos))
-    sendWebhook("Rift detected! Flying to location...", true)
+    print("========================================")
+    print("🎯 SELECTED RIFT DETECTED!")
+    print("   Name: " .. rift.Name)
+    print("   Position: " .. tostring(riftPos))
+    print("========================================")
     
     -- Store current position
     local char = p.Character
@@ -411,10 +371,11 @@ local function handleRiftSpawn(rift, fromChatCorrelation)
         return
     end
     
-    -- Stop auto hatch if running
-    local wasAutoHatching = autoHatchEnabled
-    if wasAutoHatching then
+    -- Store auto hatch state and stop it
+    wasAutoHatchingBeforeFlight = autoHatchEnabled
+    if autoHatchEnabled then
         stopAutoHatch()
+        print("⏸ Auto Hatch disabled for flight")
     end
     
     -- Set state
@@ -427,10 +388,12 @@ local function handleRiftSpawn(rift, fromChatCorrelation)
         isAtRift = true
         riftStartTime = tick()
         
-        print("✓ Arrived at rift, starting auto hatch for 10 minutes")
-        sendWebhook("Arrived at rift! Auto hatching for 10 minutes", false)
+        print("========================================")
+        print("✅ ARRIVED AT RIFT!")
+        print("   Starting auto hatch for 10 minutes")
+        print("========================================")
         
-        -- Start auto hatch
+        -- Start auto hatch at rift
         startAutoHatch()
         
         -- Monitor rift duration
@@ -457,7 +420,7 @@ local function handleRiftSpawn(rift, fromChatCorrelation)
             -- Check if we're still at the rift (user might have cancelled)
             if isAtRift then
                 print("⏰ Rift time expired, returning to egg")
-                returnToStoredPosition()
+                returnToEgg()
             end
         end)
     end)
@@ -470,7 +433,7 @@ local function setupRiftMonitoring()
     -- Function to set up monitoring on a folder
     local function monitorFolder(folder, folderPath)
         if monitoredFolders[folder] then
-            return -- Already monitoring this folder
+            return
         end
         
         print("✓ Monitoring: " .. folderPath)
@@ -483,19 +446,15 @@ local function setupRiftMonitoring()
         
         -- Monitor for new rifts
         folder.ChildAdded:Connect(function(rift)
-            print("🎄 NEW RIFT SPAWNED!")
-            print("   Location: " .. folderPath)
-            print("   Name: " .. rift.Name)
-            print("   Type: " .. rift.ClassName)
-            print("   Time: " .. os.date("%H:%M:%S"))
+            print("🎄 NEW RIFT SPAWNED: " .. rift.Name)
             task.wait(1) -- Small delay to ensure rift is fully loaded
-            handleRiftSpawn(rift, true) -- Use chat correlation
+            handleRiftSpawn(rift)
         end)
     end
     
     -- Try multiple possible locations
     local success = pcall(function()
-        -- Location 1: workspace.Rendered.Rifts (from old game files)
+        -- Location 1: workspace.Rendered.Rifts
         if workspace:FindFirstChild("Rendered") then
             local rendered = workspace.Rendered
             
@@ -504,7 +463,6 @@ local function setupRiftMonitoring()
                 monitorFolder(riftsFolder, "workspace.Rendered.Rifts")
             else
                 print("⚠ workspace.Rendered.Rifts not found yet, monitoring for it...")
-                -- Monitor for Rifts folder creation
                 rendered.ChildAdded:Connect(function(child)
                     if child.Name == "Rifts" and not monitoredFolders[child] then
                         print("✓ Rifts folder appeared!")
@@ -545,186 +503,11 @@ local function setupRiftMonitoring()
             end)
         end
         
-        -- Location 3: workspace.Map.Rifts (another alternative)
-        if workspace:FindFirstChild("Map") then
-            local map = workspace.Map
-            if map:FindFirstChild("Rifts") then
-                monitorFolder(map.Rifts, "workspace.Map.Rifts")
-            else
-                map.ChildAdded:Connect(function(child)
-                    if child.Name == "Rifts" and not monitoredFolders[child] then
-                        print("✓ Found rifts in Map!")
-                        monitorFolder(child, "workspace.Map.Rifts")
-                    end
-                end)
-            end
-        end
-        
-        print("✓ Rift monitoring active (checking multiple locations)")
+        print("✓ Rift monitoring active")
     end)
     
     if not success then
         print("✗ Failed to setup rift monitoring")
-    end
-end
-
--- Chat monitoring for "Feeling jolly" (Christmas Chest Rifts)
-local function setupChatMonitoring()
-    -- Try TextChatService (new chat system)
-    local success1 = pcall(function()
-        if TextChatService and TextChatService.MessageReceived then
-            TextChatService.MessageReceived:Connect(function(message)
-                if not scriptActive or not riftAutoFlyEnabled then return end
-                
-                local text = message.Text or ""
-                if string.find(string.lower(text), "feeling jolly") then
-                    print("========================================")
-                    print("🎅 'FEELING JOLLY' DETECTED IN CHAT!")
-                    print("   Time: " .. os.date("%H:%M:%S"))
-                    print("   Timestamp: " .. string.format("%.3f", tick()))
-                    print("========================================")
-                    lastChatNotificationTime = tick()
-                    pendingRiftDetection = true
-                    
-                    -- Send webhook notification
-                    sendWebhook("Christmas Chest Rift notification detected! Waiting for rift spawn...", false)
-                    
-                    -- Debug: Monitor workspace for ANY new objects during correlation window
-                    if debugMode then
-                        print("🔍 DEBUG: Monitoring workspace for new objects...")
-                        local monitorStartTime = tick()
-                        
-                        -- Monitor workspace descendants
-                        local connection = workspace.DescendantAdded:Connect(function(descendant)
-                            local timeSinceChat = tick() - lastChatNotificationTime
-                            if timeSinceChat < chatEventCorrelationWindow then
-                                print("   🔍 New object added (" .. string.format("%.3f", timeSinceChat) .. "s after chat):")
-                                print("      Name: " .. descendant.Name)
-                                print("      Type: " .. descendant.ClassName)
-                                print("      Path: " .. descendant:GetFullName())
-                                
-                                -- Check if it might be a rift
-                                if string.find(string.lower(descendant.Name), "rift") or 
-                                   string.find(string.lower(descendant.Name), "chest") or
-                                   string.find(string.lower(descendant.Name), "christmas") then
-                                    print("      ⚠ POSSIBLE RIFT OBJECT!")
-                                end
-                            end
-                        end)
-                        
-                        -- Clean up monitoring after window
-                        task.delay(chatEventCorrelationWindow + 0.5, function()
-                            connection:Disconnect()
-                            print("🔍 DEBUG: Monitoring ended")
-                        end)
-                    end
-                    
-                    -- Set a timeout - if no rift spawns within the window, warn the user
-                    spawn(function()
-                        task.wait(chatEventCorrelationWindow + 1)
-                        if pendingRiftDetection then
-                            print("")
-                            print("⚠⚠⚠ NO RIFT DETECTED WITHIN " .. chatEventCorrelationWindow .. "s ⚠⚠⚠")
-                            print("   This might mean:")
-                            print("   1. Rift spawned in a different location/world")
-                            print("   2. Rift detection code needs adjustment")
-                            print("   3. workspace.Rendered.Rifts doesn't exist in this game version")
-                            print("   4. Check the debug output above for any suspicious objects")
-                            print("")
-                            print("   Please run 'rift_debug.lua' to help identify the issue!")
-                            print("========================================")
-                            pendingRiftDetection = false
-                        end
-                    end)
-                end
-            end)
-            print("✓ Chat monitoring active (TextChatService)")
-        end
-    end)
-    
-    -- Try legacy chat system as fallback
-    if not success1 then
-        local success2 = pcall(function()
-            local Players = game:GetService("Players")
-            local player = Players.LocalPlayer
-            
-            -- Monitor PlayerGui for chat
-            local playerGui = player:WaitForChild("PlayerGui", 5)
-            if playerGui then
-                -- Function to monitor chat element
-                local function monitorChatElement(child)
-                    if child:IsA("TextLabel") or child:IsA("TextBox") then
-                        child:GetPropertyChangedSignal("Text"):Connect(function()
-                            if not scriptActive or not riftAutoFlyEnabled then return end
-                            
-                            local text = child.Text or ""
-                            if string.find(string.lower(text), "feeling jolly") then
-                                print("========================================")
-                                print("🎅 'FEELING JOLLY' DETECTED IN CHAT!")
-                                print("   Time: " .. os.date("%H:%M:%S"))
-                                print("   Timestamp: " .. string.format("%.3f", tick()))
-                                print("========================================")
-                                lastChatNotificationTime = tick()
-                                pendingRiftDetection = true
-                                
-                                sendWebhook("Christmas Chest Rift notification detected! Waiting for rift spawn...", false)
-                                
-                                -- Debug: Monitor workspace for ANY new objects during correlation window
-                                if debugMode then
-                                    print("🔍 DEBUG: Monitoring workspace for new objects...")
-                                    
-                                    local connection = workspace.DescendantAdded:Connect(function(descendant)
-                                        local timeSinceChat = tick() - lastChatNotificationTime
-                                        if timeSinceChat < chatEventCorrelationWindow then
-                                            print("   🔍 New object added (" .. string.format("%.3f", timeSinceChat) .. "s after chat):")
-                                            print("      Name: " .. descendant.Name)
-                                            print("      Type: " .. descendant.ClassName)
-                                            print("      Path: " .. descendant:GetFullName())
-                                            
-                                            if string.find(string.lower(descendant.Name), "rift") or 
-                                               string.find(string.lower(descendant.Name), "chest") or
-                                               string.find(string.lower(descendant.Name), "christmas") then
-                                                print("      ⚠ POSSIBLE RIFT OBJECT!")
-                                            end
-                                        end
-                                    end)
-                                    
-                                    task.delay(chatEventCorrelationWindow + 0.5, function()
-                                        connection:Disconnect()
-                                        print("🔍 DEBUG: Monitoring ended")
-                                    end)
-                                end
-                                
-                                -- Set a timeout
-                                spawn(function()
-                                    task.wait(chatEventCorrelationWindow + 1)
-                                    if pendingRiftDetection then
-                                        print("")
-                                        print("⚠⚠⚠ NO RIFT DETECTED WITHIN " .. chatEventCorrelationWindow .. "s ⚠⚠⚠")
-                                        print("   Please run 'rift_debug.lua' to help identify the issue!")
-                                        print("========================================")
-                                        pendingRiftDetection = false
-                                    end
-                                end)
-                            end
-                        end)
-                    end
-                end
-                
-                -- Monitor existing and new chat elements
-                for _, descendant in ipairs(playerGui:GetDescendants()) do
-                    monitorChatElement(descendant)
-                end
-                
-                playerGui.DescendantAdded:Connect(monitorChatElement)
-                
-                print("✓ Chat monitoring active (Legacy)")
-            end
-        end)
-        
-        if not success2 then
-            print("✗ Failed to setup chat monitoring")
-        end
     end
 end
 
@@ -762,15 +545,18 @@ local function cancelRiftOperation()
     flyingToRift = false
     returningToEgg = false
     riftStartTime = nil
-    storedPosition = nil
-    storedCFrame = nil
+    
+    -- Re-enable auto hatch if it was on before
+    if wasAutoHatchingBeforeFlight then
+        startAutoHatch()
+    end
     
     print("✓ Rift operation cancelled")
 end
 
 -- Create GUI
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RiftAutoFlyGUI"
+screenGui.Name = "RiftAutoFlyGUI_V2"
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
@@ -787,8 +573,8 @@ screenGui.Parent = parent
 -- Main frame
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 350, 0, 400)
-mainFrame.Position = UDim2.new(0.5, -175, 0.5, -200)
+mainFrame.Size = UDim2.new(0, 380, 0, 520)
+mainFrame.Position = UDim2.new(0.5, -190, 0.5, -260)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 2
 mainFrame.BorderColor3 = Color3.fromRGB(50, 200, 50)
@@ -796,7 +582,6 @@ mainFrame.Active = true
 mainFrame.Draggable = true
 mainFrame.Parent = screenGui
 
--- Add rounded corners
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = mainFrame
@@ -812,7 +597,6 @@ local titleCorner = Instance.new("UICorner")
 titleCorner.CornerRadius = UDim.new(0, 8)
 titleCorner.Parent = titleBar
 
--- Fix bottom corners of title bar
 local titleBottomFix = Instance.new("Frame")
 titleBottomFix.Size = UDim2.new(1, 0, 0, 8)
 titleBottomFix.Position = UDim2.new(0, 0, 1, -8)
@@ -820,39 +604,23 @@ titleBottomFix.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
 titleBottomFix.BorderSizePixel = 0
 titleBottomFix.Parent = titleBar
 
--- Title text
 local titleText = Instance.new("TextLabel")
-titleText.Size = UDim2.new(1, -80, 1, 0)
+titleText.Size = UDim2.new(1, -20, 1, 0)
 titleText.Position = UDim2.new(0, 10, 0, 0)
 titleText.BackgroundTransparency = 1
-titleText.Text = "RIFT AUTO FLY"
+titleText.Text = "🎄 RIFT AUTO FLY"
 titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleText.TextSize = 18
 titleText.Font = Enum.Font.GothamBold
 titleText.TextXAlignment = Enum.TextXAlignment.Left
 titleText.Parent = titleBar
 
--- Enable/Disable toggle button (top right)
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 60, 0, 28)
-toggleBtn.Position = UDim2.new(1, -70, 0, 6)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-toggleBtn.Text = "ON"
-toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleBtn.TextSize = 14
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.BorderSizePixel = 0
-toggleBtn.Parent = titleBar
-
-local toggleCorner = Instance.new("UICorner")
-toggleCorner.CornerRadius = UDim.new(0, 6)
-toggleCorner.Parent = toggleBtn
-
 -- Content area
-local contentFrame = Instance.new("Frame")
+local contentFrame = Instance.new("ScrollingFrame")
 contentFrame.Size = UDim2.new(1, -20, 1, -60)
 contentFrame.Position = UDim2.new(0, 10, 0, 50)
 contentFrame.BackgroundTransparency = 1
+contentFrame.ScrollBarThickness = 6
 contentFrame.Parent = mainFrame
 
 -- Auto Hatch button
@@ -871,28 +639,62 @@ local autoHatchCorner = Instance.new("UICorner")
 autoHatchCorner.CornerRadius = UDim.new(0, 6)
 autoHatchCorner.Parent = autoHatchBtn
 
--- Rift Auto Fly button
-local riftFlyBtn = Instance.new("TextButton")
-riftFlyBtn.Size = UDim2.new(1, 0, 0, 40)
-riftFlyBtn.Position = UDim2.new(0, 0, 0, 50)
-riftFlyBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-riftFlyBtn.Text = "Rift Auto Fly: OFF"
-riftFlyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-riftFlyBtn.TextSize = 16
-riftFlyBtn.Font = Enum.Font.GothamBold
-riftFlyBtn.BorderSizePixel = 0
-riftFlyBtn.Parent = contentFrame
+-- Rift selection label
+local riftSelectionLabel = Instance.new("TextLabel")
+riftSelectionLabel.Size = UDim2.new(1, 0, 0, 30)
+riftSelectionLabel.Position = UDim2.new(0, 0, 0, 50)
+riftSelectionLabel.BackgroundTransparency = 1
+riftSelectionLabel.Text = "Select Rifts to Hunt:"
+riftSelectionLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+riftSelectionLabel.TextSize = 14
+riftSelectionLabel.Font = Enum.Font.GothamBold
+riftSelectionLabel.TextXAlignment = Enum.TextXAlignment.Left
+riftSelectionLabel.Parent = contentFrame
 
-local riftFlyCorner = Instance.new("UICorner")
-riftFlyCorner.CornerRadius = UDim.new(0, 6)
-riftFlyCorner.Parent = riftFlyBtn
+-- Create rift checkboxes
+local riftCheckboxes = {}
+for i, rift in ipairs(AVAILABLE_RIFTS) do
+    local yPos = 80 + ((i - 1) * 40)
+    
+    local checkbox = Instance.new("TextButton")
+    checkbox.Size = UDim2.new(1, 0, 0, 35)
+    checkbox.Position = UDim2.new(0, 0, 0, yPos)
+    checkbox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    checkbox.Text = "✓ " .. rift.displayName
+    checkbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    checkbox.TextSize = 13
+    checkbox.Font = Enum.Font.Gotham
+    checkbox.TextXAlignment = Enum.TextXAlignment.Left
+    checkbox.BorderSizePixel = 0
+    checkbox.Parent = contentFrame
+    
+    -- Add padding
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 10)
+    padding.Parent = checkbox
+    
+    local checkboxCorner = Instance.new("UICorner")
+    checkboxCorner.CornerRadius = UDim.new(0, 6)
+    checkboxCorner.Parent = checkbox
+    
+    -- Update initial state
+    if riftSelections[rift.name] then
+        checkbox.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        checkbox.Text = "✓ " .. rift.displayName
+    else
+        checkbox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        checkbox.Text = "☐ " .. rift.displayName
+    end
+    
+    riftCheckboxes[rift.name] = checkbox
+end
 
--- Egg selector dropdown
+-- Egg selector
 local eggSelectorLabel = Instance.new("TextLabel")
 eggSelectorLabel.Size = UDim2.new(1, 0, 0, 25)
-eggSelectorLabel.Position = UDim2.new(0, 0, 0, 100)
+eggSelectorLabel.Position = UDim2.new(0, 0, 0, 370)
 eggSelectorLabel.BackgroundTransparency = 1
-eggSelectorLabel.Text = "Select Your Current Egg:"
+eggSelectorLabel.Text = "Return to Egg:"
 eggSelectorLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 eggSelectorLabel.TextSize = 14
 eggSelectorLabel.Font = Enum.Font.Gotham
@@ -901,7 +703,7 @@ eggSelectorLabel.Parent = contentFrame
 
 local eggSelectorBtn = Instance.new("TextButton")
 eggSelectorBtn.Size = UDim2.new(1, 0, 0, 35)
-eggSelectorBtn.Position = UDim2.new(0, 0, 0, 130)
+eggSelectorBtn.Position = UDim2.new(0, 0, 0, 400)
 eggSelectorBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 eggSelectorBtn.Text = "🥚 " .. selectedEgg
 eggSelectorBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -917,7 +719,7 @@ eggSelectorCorner.Parent = eggSelectorBtn
 -- Egg dropdown list (hidden by default)
 local eggDropdown = Instance.new("ScrollingFrame")
 eggDropdown.Size = UDim2.new(1, 0, 0, 150)
-eggDropdown.Position = UDim2.new(0, 0, 0, 170)
+eggDropdown.Position = UDim2.new(0, 0, 0, 440)
 eggDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 eggDropdown.BorderSizePixel = 1
 eggDropdown.BorderColor3 = Color3.fromRGB(100, 100, 100)
@@ -959,21 +761,23 @@ for i, eggName in ipairs(AVAILABLE_EGGS) do
     end)
 end
 
--- Update canvas size for dropdown
 eggDropdown.CanvasSize = UDim2.new(0, 0, 0, #AVAILABLE_EGGS * 32)
+
+-- Update canvas size for content frame
+contentFrame.CanvasSize = UDim2.new(0, 0, 0, 600)
 
 -- Status label
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, 0, 0, 80)
-statusLabel.Position = UDim2.new(0, 0, 1, -90)
+statusLabel.Size = UDim2.new(1, -20, 0, 80)
+statusLabel.Position = UDim2.new(0, 10, 1, -90)
 statusLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-statusLabel.Text = "Status: Idle"
+statusLabel.Text = "Status: Waiting for rifts..."
 statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 statusLabel.TextSize = 12
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextWrapped = true
 statusLabel.BorderSizePixel = 0
-statusLabel.Parent = contentFrame
+statusLabel.Parent = mainFrame
 
 local statusCorner = Instance.new("UICorner")
 statusCorner.CornerRadius = UDim.new(0, 6)
@@ -981,8 +785,8 @@ statusCorner.Parent = statusLabel
 
 -- Cancel button (only visible when at rift)
 local cancelBtn = Instance.new("TextButton")
-cancelBtn.Size = UDim2.new(1, 0, 0, 35)
-cancelBtn.Position = UDim2.new(0, 0, 1, -90)
+cancelBtn.Size = UDim2.new(1, -20, 0, 35)
+cancelBtn.Position = UDim2.new(0, 10, 1, -90)
 cancelBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
 cancelBtn.Text = "🛑 Cancel Rift Operation"
 cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -995,22 +799,6 @@ cancelBtn.Parent = mainFrame
 local cancelCorner = Instance.new("UICorner")
 cancelCorner.CornerRadius = UDim.new(0, 6)
 cancelCorner.Parent = cancelBtn
-
--- Webhook settings button
-local settingsBtn = Instance.new("TextButton")
-settingsBtn.Size = UDim2.new(1, 0, 0, 30)
-settingsBtn.Position = UDim2.new(0, 0, 1, -40)
-settingsBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-settingsBtn.Text = "⚙ Webhook Settings"
-settingsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-settingsBtn.TextSize = 12
-settingsBtn.Font = Enum.Font.Gotham
-settingsBtn.BorderSizePixel = 0
-settingsBtn.Parent = contentFrame
-
-local settingsCorner = Instance.new("UICorner")
-settingsCorner.CornerRadius = UDim.new(0, 6)
-settingsCorner.Parent = settingsBtn
 
 -- Update status display
 local function updateStatus()
@@ -1026,13 +814,14 @@ local function updateStatus()
             elseif returningToEgg then
                 statusText = statusText .. "🔙 Returning to egg..."
             else
-                statusText = statusText .. "⏳ Waiting for rift..."
+                statusText = statusText .. "⏳ Waiting for selected rifts..."
             end
             
             statusLabel.Text = statusText
             
             -- Show/hide cancel button
             cancelBtn.Visible = (flyingToRift or isAtRift or returningToEgg)
+            statusLabel.Visible = not cancelBtn.Visible
             
             task.wait(1)
         end
@@ -1040,29 +829,14 @@ local function updateStatus()
 end
 
 -- Button handlers
-toggleBtn.Activated:Connect(function()
-    scriptActive = not scriptActive
-    
-    if scriptActive then
-        toggleBtn.Text = "ON"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-        titleBar.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-        titleBottomFix.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-        mainFrame.BorderColor3 = Color3.fromRGB(50, 200, 50)
-    else
-        toggleBtn.Text = "OFF"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        titleBar.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        titleBottomFix.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        mainFrame.BorderColor3 = Color3.fromRGB(200, 50, 50)
-        
-        -- Cancel any active operations
-        cancelRiftOperation()
-    end
-end)
-
 autoHatchBtn.Activated:Connect(function()
     if not scriptActive then return end
+    
+    -- Don't allow manual toggle during rift operations
+    if flyingToRift or returningToEgg then
+        print("⚠ Cannot toggle auto hatch during flight")
+        return
+    end
     
     if autoHatchEnabled then
         stopAutoHatch()
@@ -1075,24 +849,34 @@ autoHatchBtn.Activated:Connect(function()
     end
 end)
 
-riftFlyBtn.Activated:Connect(function()
-    if not scriptActive then return end
-    
-    riftAutoFlyEnabled = not riftAutoFlyEnabled
-    
-    if riftAutoFlyEnabled then
-        riftFlyBtn.Text = "Rift Auto Fly: ON"
-        riftFlyBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-    else
-        riftFlyBtn.Text = "Rift Auto Fly: OFF"
-        riftFlyBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+-- Rift checkbox handlers
+for riftName, checkbox in pairs(riftCheckboxes) do
+    checkbox.Activated:Connect(function()
+        if not scriptActive then return end
         
-        -- Cancel any active operations
-        cancelRiftOperation()
-    end
-    
-    saveSettings()
-end)
+        riftSelections[riftName] = not riftSelections[riftName]
+        
+        -- Find display name
+        local displayName = riftName
+        for _, rift in ipairs(AVAILABLE_RIFTS) do
+            if rift.name == riftName then
+                displayName = rift.displayName
+                break
+            end
+        end
+        
+        if riftSelections[riftName] then
+            checkbox.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            checkbox.Text = "✓ " .. displayName
+        else
+            checkbox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+            checkbox.Text = "☐ " .. displayName
+        end
+        
+        saveSettings()
+        print("✓ Rift " .. riftName .. ": " .. (riftSelections[riftName] and "ON" or "OFF"))
+    end)
+end
 
 eggSelectorBtn.Activated:Connect(function()
     eggDropdown.Visible = not eggDropdown.Visible
@@ -1102,46 +886,41 @@ cancelBtn.Activated:Connect(function()
     cancelRiftOperation()
 end)
 
--- Webhook settings dialog (simple prompt for now)
-settingsBtn.Activated:Connect(function()
-    if not scriptActive then return end
-    
-    -- This would ideally open a settings dialog
-    -- For now, we'll just print instructions
-    print("========================================")
-    print("WEBHOOK SETTINGS")
-    print("Edit the webhookURL and discordUserID")
-    print("variables at the top of the script,")
-    print("or use setclipboard to paste them in.")
-    print("========================================")
-    
-    -- If setclipboard is available, we could implement a paste function
-    if setclipboard then
-        print("Tip: Use setclipboard() to paste webhook URL")
-    end
-end)
-
 -- Initialize
 loadSettings()
-setupRiftMonitoring()
-setupChatMonitoring()
-updateStatus()
 
--- Update GUI state on load
-if riftAutoFlyEnabled then
-    riftFlyBtn.Text = "Rift Auto Fly: ON"
-    riftFlyBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+-- Update button states from loaded settings
+for riftName, checkbox in pairs(riftCheckboxes) do
+    local displayName = riftName
+    for _, rift in ipairs(AVAILABLE_RIFTS) do
+        if rift.name == riftName then
+            displayName = rift.displayName
+            break
+        end
+    end
+    
+    if riftSelections[riftName] then
+        checkbox.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        checkbox.Text = "✓ " .. displayName
+    else
+        checkbox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        checkbox.Text = "☐ " .. displayName
+    end
 end
 
+setupRiftMonitoring()
+updateStatus()
+
 print("========================================")
-print("✓ Rift Auto Fly script loaded!")
+print("✓ Rift Auto Fly V2 loaded!")
 print("✓ GUI created and ready")
 print("========================================")
-print("Instructions:")
-print("1. Enable 'Rift Auto Fly' button")
-print("2. Select your current egg from dropdown")
-print("3. Wait for rift to spawn")
-print("4. Script will automatically fly to rift")
-print("5. After 10 minutes, returns to egg")
+print("Selected rifts:")
+for riftName, enabled in pairs(riftSelections) do
+    if enabled then
+        print("  ✓ " .. riftName)
+    end
+end
+print("Return egg: " .. selectedEgg)
 print("========================================")
 
